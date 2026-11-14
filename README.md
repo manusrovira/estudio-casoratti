@@ -15,6 +15,32 @@ Platform configuration is readable and editable through `webdev.config`. Default
 
 ---
 
+## Estado en producción
+
+| Pieza | Identificador |
+|---|---|
+| Sitio público | **https://estudio-casoratti.vercel.app** |
+| Panel de administración | **https://estudio-casoratti.vercel.app/panel** (sólo administrador) |
+| Repositorio | **https://github.com/manusrovira/estudio-casoratti** (rama `main`) |
+| Proyecto Supabase | `estudio-casoratti` · ref `hebooqzvbnwuabujkbff` · `https://hebooqzvbnwuabujkbff.supabase.co` |
+
+Cuentas reales creadas (password única: `casoratti2026`):
+
+| Email | Rol |
+|---|---|
+| `admin@estudiocasoratti.com.ar` | **administrador** |
+| `abogado@estudiocasoratti.com.ar` | abogado |
+| `cliente@ejemplo.com` | cliente |
+| `carlos@ejemplo.com` | cliente |
+| `registrado@ejemplo.com` | usuario registrado |
+
+> **Pendiente:** la Edge Function `submit-consultation` todavía no está desplegada en el
+> proyecto real (requiere un *access token* de cuenta Supabase con alcance
+> `edge_functions_write` y los secretos `SITE_ORIGIN` y `RATE_LIMIT_SALT`). Hasta que se
+> despliegue, el formulario de contacto del sitio no puede guardar consultas.
+
+---
+
 ## Plataforma de gestión jurídica (Supabase)
 
 Encima del sitio institucional se agregó una plataforma privada con base de datos

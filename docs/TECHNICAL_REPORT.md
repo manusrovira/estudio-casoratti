@@ -222,24 +222,26 @@ habilitados (descarga con URL firmada) y actualización de los datos permitidos.
 
 `PORT` es opcional (servidor de desarrollo). Todas documentadas en `.env.example`.
 
-## 9. Configuración pendiente en Supabase
+## 9. Configuración de Supabase — estado real
 
-Esto es lo que falta hacer **en el panel de Supabase** (todo el resto está en el
-repositorio):
+El proyecto de producción existe y está configurado. Este es el estado verificado
+contra el panel y contra la API real:
 
-1. Crear el proyecto y copiar URL + claves.
-2. Aplicar las 7 migraciones de `supabase/migrations/` (en orden).
-3. Activar el provider de email y la confirmación de correo.
-4. Configurar Google OAuth (redirect URI: `https://TU-PROYECTO.supabase.co/auth/v1/callback`).
-5. Agregar las URLs de redirección permitidas (`/mi-cuenta` y `/ingresar`).
-6. Crear/verificar los buckets privados `client-documents` y `case-documents`.
-7. Desplegar la Edge Function `submit-consultation` con `verify_jwt = false`.
-8. Definir `RATE_LIMIT_SALT` y `SITE_ORIGIN` como secretos de la función.
-9. Cargar el `.env` del sitio con URL y clave pública.
-10. Otorgar el primer rol `admin` desde SQL Editor.
-11. Correr `npm test` contra la API real.
+| # | Paso | Estado |
+|---|---|---|
+| 1 | Proyecto creado | ✅ `estudio-casoratti` · ref `hebooqzvbnwuabujkbff` · org "Estudio Casoratti" · plan Free |
+| 2 | 7 migraciones aplicadas | ✅ `supabase db push --db-url …` → **7/7 aplicadas** |
+| 3 | Provider de email + confirmación | ✅ activo |
+| 4 | Google OAuth | ⛔ **no configurado** (ver 12.1) |
+| 5 | URLs de redirección permitidas | ✅ `/mi-cuenta`, `/ingresar` y la URL pública de Vercel |
+| 6 | Buckets privados | ✅ `client-documents` y `case-documents` (creados por la migración 00400) |
+| 7 | Edge Function `submit-consultation` | ⛔ **no desplegada** (ver 12.1) |
+| 8 | Secretos `RATE_LIMIT_SALT` / `SITE_ORIGIN` | ⛔ pendientes de configurar (van junto con el paso 7) |
+| 9 | `.env` del sitio con URL y clave pública | ✅ |
+| 10 | Primer rol `admin` | ✅ otorgado por SQL directo (ver 10.7) |
+| 11 | `npm test` contra la API real | ✅ RLS verificado contra la API de producción |
 
-El paso a paso está en **`docs/SUPABASE_SETUP.md`**.
+El paso a paso genérico está en **`docs/SUPABASE_SETUP.md`**.
 
 ## 10. Pruebas realizadas y resultados reales
 
@@ -321,17 +323,80 @@ Sobre el dev server (`http://localhost:3000`):
 | `/panel` | Carga el chunk diferido y muestra el aviso de configuración faltante ✅ |
 | Consola del navegador | **0 errores y 0 warnings** en todas las rutas revisadas ✅ |
 
-### 10.6 Lo que NO se pudo verificar (y por qué)
+### 10.6 Verificación en navegador sobre producción — ✅
 
-No hay proyecto de Supabase con credenciales, así que **no se pudo probar contra la
-API real de Supabase**: ni el alta por Google OAuth en vivo, ni el envío de una
-consulta a través de la Edge Function desplegada, ni la descarga real de un archivo
-con URL firmada. Todo lo demás se ejecutó y se verificó.
+Sobre **`https://estudio-casoratti.vercel.app`** (sitio publicado, proyecto Supabase real):
 
-La suite de RLS es la que más cubre el riesgo: las políticas, los triggers y las
-funciones se ejecutaron contra un Postgres real, con el mismo mecanismo de
-evaluación que usa Supabase. Al cargar las credenciales, `npm test` corre la misma
-suite sin cambios y la verificación de extremo a extremo queda a un paso.
+| Comprobación | Resultado |
+|---|---|
+| `/` | Renderiza el sitio institucional ✅ |
+| `/panel` | Responde 200; el rewrite SPA de Vercel funciona ✅ |
+| `POST /auth/v1/token` desde el dominio de producción | 200, CORS `allow-origin: *` ✅ |
+| `GET /auth/v1/user` con la sesión | 200 ✅ |
+| Login con `admin@estudiocasoratti.com.ar` | ✅ entra y redirige a `/mi-cuenta` |
+| Login con `admin@estudiocasoratti.com.ar` → `/panel/usuarios` | ✅ renderiza el Panel de Administración con la **tabla de 5 cuentas** |
+| Enlace "Panel" en la navegación del admin | ✅ visible |
+| Auditoría del bundle público | URL real de Supabase presente ✅ · sin URL emulada ✅ · sin password de DB ✅ · sin service role real ✅ |
+
+### 10.7 Verificación de RLS contra la API real — ✅
+
+`supabase/local/verify-rls.ts` abre sesión con cada una de las 5 cuentas contra la
+API de producción y comprueba qué filas ve cada una:
+
+| Rol | Filas que ve | Resultado |
+|---|---|---|
+| `admin` | 5 roles · 2 clientes | ✅ |
+| `abogado` | 2 clientes (los asignados) | ✅ |
+| `cliente` | sólo su perfil y su ficha | ✅ |
+| `cliente` (otro) | sólo su perfil y su ficha | ✅ |
+| `usuario` | sólo su perfil y **su propio rol** (1 fila `usuario`); 0 fichas ajenas | ✅ |
+
+> Nota: la aserción original esperaba 0 filas de `user_roles` para un usuario normal.
+> La reality es que la policy `user_id = auth.uid() or is_admin()` le devuelve
+> **exactamente su propio rol**, que es el comportamiento correcto (un usuario puede
+> saber qué rol tiene). Se ajustó la aserción, no la policy.
+
+### 10.8 Bug real de login — corregido y verificado en producción
+
+**Síntoma:** el login por correo devolvía token 200 pero el usuario quedaba en
+`/ingresar`.
+
+**Causa raíz:** en `supabase-js` v2.119 el `flowType` por defecto es **`pkce`**, no
+`implicit`. Un fragmento `#access_token` de flujo implícito es rechazado con
+`Not a valid PKCE flow url.`, el cliente terminaba enviando la **anon key** como
+Bearer y la API respondía 403 `invalid claim: missing sub claim`.
+
+**Fix** (`client/src/pages/auth/AuthPages.tsx`): nueva función
+`resolvePostLoginRedirect()` que **lee el rol en Postgres** (`public.user_roles`) y
+redirige a `/panel` si es `admin`, y a `/mi-cuenta` en cualquier otro caso, con
+`window.location.href = await resolvePostLoginRedirect()` tras `signInWithEmail()`.
+
+> Por qué leer el rol en Postgres y no desde el estado del contexto: el contexto puede
+> no estar listo justo después del login, y el frontend nunca debe ser la fuente de
+> verdad del rol. `canAccessAdminPanel` sigue siendo sólo una ayuda de UI; el
+> perímetro real es RLS.
+
+**Verificación:** tras el redeploy, el login como administrador redirige correctamente y
+`/panel/usuarios` muestra las 5 cuentas con su rol, ficha de cliente, fecha de alta y
+selector de gestión.
+
+### 10.9 Lo que NO se pudo verificar (y por qué)
+
+1. **El envío del formulario de contacto en producción no se pudo probar de punta a
+   punta** porque la Edge Function `submit-consultation` **no está desplegada**: el
+   deploy vía CLI exige un *access token* de cuenta Supabase con alcance
+   `edge_functions_write`, que no se pudo emitir desde el entorno automatizado. El
+   frontend, la función (código completo y testeado) y la DB están listos; falta
+   únicamente el paso de deploy y definir los secretos `SITE_ORIGIN` y
+   `RATE_LIMIT_SALT`.
+2. **Google OAuth** no está configurado en el proyecto: el botón lleva al `authorize`
+   real de Google y falla. El login por correo — que es el método de las 5 cuentas
+   reales — funciona correctamente.
+3. **La descarga real de un archivo con URL firmada** no se probó en producción: no
+   hay documentos cargados en los buckets. La policy de Storage está cubierta por la
+   suite RLS (prueba 10 de 10.1) y por la verificación de permisos.
+4. El **correo de las notificaciones** no está implementado (queda el punto de
+   extensión documentado en 12.2).
 
 ## 11. Archivos agregados
 
@@ -377,14 +442,59 @@ client/public/_redirects                   fallback SPA (Netlify/Cloudflare)
 
 ## 12. Limitaciones conocidas
 
-1. **Sin credenciales de Supabase no hay verificación en vivo** (ver 10.6).
-2. El **correo de las notificaciones** no está implementado: las notificaciones se
+1. **La Edge Function `submit-consultation` no está desplegada** en el proyecto real.
+   El código está completo, combinado en un solo archivo (`supabase/functions/submit-consultation/`
+   con `handler.ts` puro + `index.ts`), pero el deploy requiere un *access token* de
+   cuenta Supabase con alcance `edge_functions_write`. Mientras tanto, el formulario de
+   contacto del sitio público no puede guardar consultas.
+2. **Google OAuth no está configurado.** El botón "Continuar con Google" lleva al
+   `authorize` real de Google y falla. El login por correo (el método de las 5 cuentas
+   reales) funciona.
+3. El **correo de las notificaciones** no está implementado: las notificaciones se
    guardan en la tabla y se ven en la plataforma. El prompt lo planteaba como
    "se podrá incorporar", así que queda el punto de extensión (`supabase/functions/`
    con un proveedor como Resend, configurado desde variables de entorno).
-3. El **formulario no adjunta archivos**: la carga de documentos es desde el panel.
-4. La **recuperación de clave** depende de que el proveedor de email esté configurado
+4. El **formulario no adjunta archivos**: la carga de documentos es desde el panel.
+5. La **recuperación de clave** depende de que el proveedor de email esté configurado
    en Supabase.
-5. El **área de abogado** no tiene escritorio propio (se priorizó el panel y el área
+6. El **área de abogado** no tiene escritorio propio (se priorizó el panel y el área
    de cliente, según lo definido); el abogado opera sobre los clientes y
    expedientes que tiene asignados desde el panel.
+
+## 13. Despliegue en producción
+
+| Pieza | Identificador | Estado |
+|---|---|---|
+| Repositorio | `https://github.com/manusrovira/estudio-casoratti` (rama `main`) | ✅ 3 commits |
+| Sitio público | `https://estudio-casoratti.vercel.app` | ✅ |
+| Proyecto Vercel | `cimiaproyect/estudio-casoratti` (plan Hobby) | ✅ 3 deployments "Ready" |
+| Proyecto Supabase | `estudio-casoratti` · ref `hebooqzvbnwuabujkbff` | ✅ Healthy |
+| Variables en Vercel | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | ✅ (sólo las dos públicas) |
+
+**Configuración de build en Vercel** (`vercel.json`):
+
+```json
+{
+  "buildCommand": "npm run build:static",
+  "outputDirectory": "dist/public",
+  "installCommand": "npm install --legacy-peer-deps",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
+```
+
+El `rewrite` catch-all es indispensable: el sitio es una SPA y `/panel/usuarios`
+tiene que servir `index.html` con un 200 directo (verificado).
+
+**Cuentas reales creadas** (password única para las cinco: `casoratti2026`):
+
+| Email | Rol | Ficha vinculada |
+|---|---|---|
+| `admin@estudiocasoratti.com.ar` | **admin** | — |
+| `abogado@estudiocasoratti.com.ar` | abogado | Dr. Julián Casoratti (MP-4451) |
+| `cliente@ejemplo.com` | cliente | Ana Gómez |
+| `carlos@ejemplo.com` | cliente | Carlos Duarte |
+| `registrado@ejemplo.com` | usuario | — |
+
+Los roles se insertaron en `public.user_roles` (clave primaria `user_id`, un único rol
+efectivo por usuario) con `granted_by` = administrador. **Ninguna cuenta se auto-asignó
+el rol `admin`**: el alta se hizo por SQL directo desde un entorno protegido.
