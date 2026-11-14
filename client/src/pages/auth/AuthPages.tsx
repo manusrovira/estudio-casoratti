@@ -1,6 +1,32 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuthContext } from "@/contexts/AuthContext";
+import { getSupabase } from "@/lib/supabase";
+
+/**
+ * Destino tras un login exitoso.
+ *
+ * El rol se lee de `public.user_roles` (Postgres es la fuente de verdad); el
+ * frontend sólo decide a qué pantalla lleva al usuario según lo que ve.
+ */
+async function resolvePostLoginRedirect(): Promise<string> {
+  try {
+    const supabase = getSupabase();
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user?.id;
+    if (userId) {
+      const { data: roleRow } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (roleRow?.role === "admin") return "/panel";
+    }
+  } catch {
+    // Si la consulta falla, se cae al destino por defecto.
+  }
+  return "/mi-cuenta";
+}
 
 /**
  * Pantallas de acceso: ingreso, registro y recuperación de clave.
@@ -79,6 +105,9 @@ export function Login() {
     try {
       if (mode === "login") {
         await signInWithEmail(email, password);
+        // Tras el login la sesión queda activa pero la vista no cambia sola:
+        // hay que llevar al usuario a su panel o a su área.
+        window.location.href = await resolvePostLoginRedirect();
       } else if (mode === "forgot") {
         await sendPasswordReset(email);
         setOk("Te enviamos un correo con el enlace para restablecer tu clave.");
