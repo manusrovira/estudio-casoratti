@@ -1,0 +1,390 @@
+# Informe técnico — Plataforma de gestión jurídica
+## Estudio Jurídico Casoratti · Posadas, Misiones
+
+**Fecha:** 14 de noviembre de 2026
+**Base del proyecto:** sitio institucional estático (React 19 + Vite 7 + Tailwind 4 + wouter)
+**Motor de base de datos:** PostgreSQL 17 sobre Supabase (PostgREST + Auth + Storage + Edge Functions)
+
+---
+
+## 1. Arquitectura implementada
+
+```
+                         ┌───────────────────────────────┐
+  Visitante ─────────────▶│  SPA estática (Vite build)    │
+                         │  React + wouter               │
+                         └───────────┬───────────────────┘
+                                     │
+                    ┌────────────────┴─────────────────┐
+                    │                                  │
+        ┌───────────▼────────────┐        ┌────────────▼─────────────┐
+        │ Edge Function          │        │ supabase-js (anon key)   │
+        │ submit-consultation    │        │ desde el navegador       │
+        │ · validación Zod       │        └────────────┬─────────────┘
+        │ · rate limit por IP    │                     │
+        │ · honeypot             │                     │
+        │ · service role (server)│                     │
+        └───────────┬────────────┘                     │
+                    │                                  │
+                    └────────────────┬─────────────────┘
+                                     ▼
+                         ┌───────────────────────────────┐
+                         │  PostgreSQL (Supabase)        │
+                         │  · RLS en todas las tablas   │
+                         │  · triggers de auditoría      │
+                         │  · notificaciones automáticas│
+                         │  · Storage privado            │
+                         └───────────────────────────────┘
+```
+
+Decisión de fondo: **Postgres es el backend y también el perímetro de seguridad.** El
+navegador llama directo a la API de Supabase con la clave pública; cada request es
+evaluado por las políticas RLS con el JWT del usuario. No existe una capa de API
+propia que revalide permisos (sería duplicar lo que la base ya garantiza).
+
+**Lo que NO se modificó:** ninguna página pública, ningún estilo del sitio, la capa
+Drizzle/MySQL existente, la autenticación Manus existente, `server/`, `drizzle/`,
+`patches/` ni el Dockerfile. La plataforma nueva es puramente aditiva.
+
+## 2. Tablas creadas
+
+15 tablas en el esquema `public`, con RLS habilitada en todas:
+
+| Tabla | Propósito | Filas iniciales |
+|---|---|---|
+| `profiles` | identidad del usuario (FK a `auth.users`) | automático por trigger |
+| `user_roles` | rol efectivo por usuario | automático (`usuario`) |
+| `lawyers` | datos profesionales del equipo | 0 |
+| `clients` | fichas de clientes | 0 |
+| `consultation_categories` | áreas jurídicas configurables | **12** (áreas reales del estudio) |
+| `legal_consultations` | consultas recibidas | 0 |
+| `consultation_notes` | notas internas (nunca del cliente) | 0 |
+| `consultation_messages` | mensajes estudio ↔ cliente | 0 |
+| `legal_cases` | expedientes | 0 |
+| `case_documents` | metadatos de archivos de expedientes | 0 |
+| `client_documents` | metadatos de archivos de clientes | 0 |
+| `audit_logs` | trail de operaciones (append-only) | automático por trigger |
+| `notifications` | avisos del sistema | automático por trigger |
+| `rate_limits` | contador de la Edge Function | automático |
+
+> Las 12 filas de `consultation_categories` son **datos de configuración** (los nombres
+> de las áreas que el estudio publica), no clientes, consultas ni expedientes de
+> ejemplo. No se cargó ningún dato ficticio de personas.
+
+**Enumerados:** `app_role` (admin, abogado, cliente, usuario), `consultation_status`
+(7 estados), `client_status` (3), `case_status` (5).
+
+## 3. Relaciones de PostgreSQL
+
+```
+auth.users ──1:1──▶ profiles ──1:1──▶ user_roles
+                        │
+                        │ user_id (único, opcional)
+                        ▼
+lawyers ──1:N──▶ clients ──1:N──▶ legal_cases ──1:N──▶ case_documents
+   │                 │                   │
+   │                 │                   └── legal_consultations.legal_case_id
+   │                 ├──▶ client_documents
+   │                 └──▶ legal_consultations.client_id
+   │
+   └── assigned_lawyer_id (en clients, legal_cases, legal_consultations)
+
+legal_consultations ──1:N──▶ consultation_notes      (internas)
+                      └──1:N──▶ consultation_messages  (con el cliente)
+consultation_categories ──1:N──▶ legal_consultations
+```
+
+- PK `uuid` con `default gen_random_uuid()` en todas las entidades de negocio.
+- `profiles.id` y `user_roles.user_id` referencian `auth.users(id) on delete cascade`.
+- `on delete cascade` en notas, mensajes y documentos; `on delete set null` en las
+  asignaciones de abogado (desvincular un abogado no borra su historial).
+- `legal_cases.client_id` es `NOT NULL`: un expediente siempre tiene cliente.
+- `legal_consultations.email` tiene un `CHECK` de formato.
+- `reference_code` y `case_number` son únicos (secuencia `consultation_reference_seq`).
+
+**Índices** (30 en total) sobre los accesos reales: estado, área, fecha de recepción,
+cliente, abogado, nombre y email en minúsculas de consultas; índices parciales para
+`is_new` y notificaciones no leídas; índices sobre `audit_logs(actor_id)`,
+`audit_logs(entity_type, entity_id)` y `audit_logs(created_at desc)`.
+
+## 4. Políticas RLS
+
+RLS habilitada en las 14 tablas del dominio (`rate_limits` queda sin policies a
+propósito: sólo la service role la toca).
+
+| Tabla | SELECT | INSERT/UPDATE/DELETE |
+|---|---|---|
+| `profiles` | el propio + admin | el propio (sólo columnas permitidas) + admin |
+| `user_roles` | el propio + admin | **sólo admin** |
+| `lawyers` | staff + el propio | sólo admin |
+| `clients` | admin, abogado asignado, el cliente | sólo admin |
+| `consultation_categories` | **público** (lectura) | sólo admin |
+| `legal_consultations` | admin, abogado asignado, cliente vinculado | sólo admin (alta pública vía Edge Function) |
+| `consultation_notes` | admin + abogado asignado | admin + abogado asignado / delete: admin |
+| `consultation_messages` | los que pueden ver la consulta | los que pueden ver la consulta / update+delete: admin |
+| `legal_cases` | admin, abogado asignado, cliente | sólo admin |
+| `case_documents` | los del expediente | admin + abogado asignado / delete: admin |
+| `client_documents` | los del cliente | sólo admin |
+| `audit_logs` | **sólo admin, sólo lectura** | sólo admin (sin update ni delete) |
+| `notifications` | el destinatario (update: sólo `read_at`) | admin |
+| `storage.objects` | según el folder (`{owner_id}/archivo`) | según el folder / delete: admin |
+
+Funciones auxiliares (`SECURITY DEFINER`, `search_path` fijo) que evitan la recursión
+de RLS y devuelven booleanos, no datos:
+`current_role()`, `is_admin()`, `is_staff()`, `is_client()`, `current_lawyer_id()`,
+`can_read_client(id)`, `can_read_case(id)`, `can_read_consultation(id)`,
+`can_access_client_folder(text)`, `can_access_case_folder(text)`.
+
+**Restricciones de privilegio** (revoke/grant a nivel de columna):
+- `profiles`: el usuario sólo puede actualizar `full_name`, `phone`, `document_id`, `avatar_url`.
+- `notifications`: el usuario sólo puede actualizar `read_at`.
+- `anon` no tiene permisos de escritura ni de lectura sobre ninguna tabla del dominio.
+
+## 5. Sistema de autenticación
+
+Supabase Auth, con dos métodos:
+
+| Función | Implementación |
+|---|---|
+| Google OAuth | `signInWithOAuth({ provider: "google" })` → redirección al proveedor |
+| Registro por email | `signUp()` con metadata (`full_name`, `accepted_terms`) |
+| Login email + contraseña | `signInWithPassword()` |
+| Recuperación de clave | `resetPasswordForEmail()` + `updateUser({ password })` |
+| Verificación de email | `Confirm email` activado en Supabase |
+| Cierre de sesión | `signOut()` + limpieza de estado local |
+| Persistencia de sesión | `persistSession: true` + `autoRefreshToken: true` + `detectSessionInUrl` |
+
+**Vínculo automático con PostgreSQL:** el trigger `handle_new_user` sobre
+`auth.users` inserta en `profiles` (nombre, email, avatar, aceptación de términos) y
+en `user_roles` con el rol `usuario`. Corre igual para altas por Google y por email.
+
+**Protección de rutas privadas:** doble capa. En el cliente, `AdminShell` verifica el
+rol antes de renderizar; en el servidor, las policies RLS garantizan que un usuario
+sin rol `admin` recibe **cero filas y cero permisos de escritura** aunque conozca la
+URL. La comprobación del cliente es sólo de experiencia de usuario.
+
+## 6. Roles y permisos
+
+| | Administrador | Abogado | Cliente | Usuario |
+|---|---|---|---|---|
+| Panel de administración | ✅ | ❌ | ❌ | ❌ |
+| Ver todas las consultas | ✅ | las asignadas | las propias | ❌ |
+| Crear/editar clientes | ✅ | ❌ | ❌ | ❌ |
+| Crear expedientes | ✅ | ❌ | ❌ | ❌ |
+| Ver expedientes | ✅ | los asignados | los propios | ❌ |
+| Notas internas | ✅ | las asignadas | ❌ | ❌ |
+| Mensajes con el cliente | ✅ | los asignados | ✅ | ❌ |
+| Documentos privados | ✅ | los asignados | los propios | ❌ |
+| Auditoría | ✅ (lectura) | ❌ | ❌ | ❌ |
+| Cambiar roles | ✅ | ❌ | ❌ | ❌ |
+| Configuración (áreas, abogados) | ✅ | ❌ | ❌ | ❌ |
+
+El rol se guarda **siempre** en `public.user_roles` y se valida en Postgres. El
+frontend nunca lo inventa, no lo persiste en `localStorage` y no lo toma de variables
+de estado.
+
+**Procedimiento seguro de alta de administrador:** un usuario no puede auto-asignarse
+el rol `admin` (no existe policy de INSERT/UPDATE para no-admins, y el panel además
+rechaza explícitamente cambiar el propio rol). El primer admin se otorga desde un
+entorno protegido (SQL Editor o CLI), documentado en `docs/SUPABASE_SETUP.md`.
+
+## 7. Módulos administrativos
+
+Rutas bajo `/panel`, con marco propio (sidebar + topbar) y carga diferida del chunk:
+
+| Ruta | Módulo | Funcionalidad |
+|---|---|---|
+| `/panel` | **Dashboard** | 8 KPIs (consultas totales, nuevas, abiertas, clientes, clientes activos, expedientes abiertos, usuarios, notificaciones sin leer) + consultas recientes + actividad reciente |
+| `/panel/usuarios` | **Usuarios** | Listado con nombre, **email**, identificador, rol y ficha de cliente vinculada; búsqueda por nombre y email; cambio de rol (con bloqueo del propio) |
+| `/panel/clientes` | **Clientes** | Alta/edición (nombre, documento, email, teléfono, domicilio, estado, abogado, notas internas), filtro por texto y estado, vinculación de cuenta registrada, conteos de consultas y expedientes |
+| `/panel/consultas` | **Consultas** | Filtros por nombre, email, área, estado, rango de fechas y "sólo nuevas"; ficha completa en panel lateral: cambio de estado, asignación de abogado, vinculación/creación de cliente, vinculación a expediente, **notas internas** y **mensajes al cliente** |
+| `/panel/expedientes` | **Expedientes** | Listado y filtros, alta/edición completa (número, carátula, cliente, abogado, fuero, jurisdicción, juzgado, estado), documentos asociados y vínculo con la consulta origen |
+| `/panel/documentacion` | **Documentación** | Subida a buckets privados con validación (pdf/docx/imágenes, 25 MB), paths `{owner_id}/{archivo}`, descarga por **URL firmada de 60 s**, borrado de archivo + metadato |
+| `/panel/auditoria` | **Auditoría** | Registro de operaciones con filtro por tipo de entidad y rango de fechas, paginado, **sólo lectura** |
+| `/panel/configuracion` | **Configuración** | CRUD de áreas jurídicas (nombre, slug, orden, activa) y del equipo de abogados (especialidades, matrícula, activo/inactivo) |
+
+Estados de consulta implementados: `nueva`, `pendiente`, `en_analisis`, `en_seguimiento`,
+`respondida`, `cerrada`, `rechazada`.
+
+Área de cliente (`/mi-cuenta`): consultas con su estado, expedientes, documentos
+habilitados (descarga con URL firmada) y actualización de los datos permitidos.
+
+## 8. Variables de entorno
+
+| Variable | Dónde | Para qué |
+|---|---|---|
+| `VITE_SUPABASE_URL` | frontend | URL del proyecto |
+| `VITE_SUPABASE_ANON_KEY` | frontend | clave pública (anon / publishable) |
+| `SUPABASE_URL` | servidor / Edge Function | lo inyecta Supabase |
+| `SUPABASE_SERVICE_ROLE_KEY` | servidor / Edge Function | **nunca en el frontend** |
+| `RATE_LIMIT_SALT` | Edge Function | ancla del hash de IP del rate limiting |
+| `SITE_ORIGIN` | Edge Function | CORS: origen permitido |
+
+`PORT` es opcional (servidor de desarrollo). Todas documentadas en `.env.example`.
+
+## 9. Configuración pendiente en Supabase
+
+Esto es lo que falta hacer **en el panel de Supabase** (todo el resto está en el
+repositorio):
+
+1. Crear el proyecto y copiar URL + claves.
+2. Aplicar las 7 migraciones de `supabase/migrations/` (en orden).
+3. Activar el provider de email y la confirmación de correo.
+4. Configurar Google OAuth (redirect URI: `https://TU-PROYECTO.supabase.co/auth/v1/callback`).
+5. Agregar las URLs de redirección permitidas (`/mi-cuenta` y `/ingresar`).
+6. Crear/verificar los buckets privados `client-documents` y `case-documents`.
+7. Desplegar la Edge Function `submit-consultation` con `verify_jwt = false`.
+8. Definir `RATE_LIMIT_SALT` y `SITE_ORIGIN` como secretos de la función.
+9. Cargar el `.env` del sitio con URL y clave pública.
+10. Otorgar el primer rol `admin` desde SQL Editor.
+11. Correr `npm test` contra la API real.
+
+El paso a paso está en **`docs/SUPABASE_SETUP.md`**.
+
+## 10. Pruebas realizadas y resultados reales
+
+### 10.1 Suite de políticas RLS sobre PostgreSQL real — 34/34 ✅
+
+Las migraciones reales se aplican sobre un **PostgreSQL 17 embebido (PGlite, WASM)**
+y las consultas se ejecutan con `set local role authenticated` + el claim JWT de la
+request, exactamente como hace PostgREST. Los shims de `auth` y `storage` replican el
+comportamiento de Supabase. Un mock no probaría nada de esto.
+
+| # del encargo | Prueba | Resultado |
+|---|---|---|
+| 1 | El alta crea perfil y rol por defecto en PostgreSQL | ✅ |
+| 1b | El mismo camino de identidad sirve al alta con Google OAuth | ✅ |
+| 2/3 | Inicio de sesión: perfil propio legible, perfil ajeno invisible | ✅ |
+| 3 | El email del usuario queda copiado en `profiles` | ✅ |
+| 4 | Un usuario normal no ve roles ajenos ni consultas, clientes, expedientes, auditoría ni notificaciones ajenas | ✅ |
+| 5 | Cada cliente ve sólo su ficha; no ve los expedientes del otro | ✅ |
+| 6 | La consulta enviada queda guardada con estado `nueva` e `is_new` | ✅ |
+| 7a | Un visitante anónimo no ve ninguna consulta | ✅ |
+| 7b | Un usuario registrado tampoco | ✅ |
+| 7c | El administrador ve y cambia el estado de las consultas | ✅ |
+| 7d | Antes de vincularse a un cliente, el cliente no la ve | ✅ |
+| 8 | El administrador ve y edita clientes; el cliente no puede editar su propia ficha | ✅ |
+| 9 | El cliente no lee ni escribe notas internas; el administrador sí | ✅ |
+| 9b | El cliente sí lee los mensajes (separados de las notas) | ✅ |
+| 10 | El dueño descarga sus documentos; otro cliente no; un usuario sin ficha tampoco; el abogado ve los asignados | ✅ |
+| 11 | Un usuario no puede insertarse ni ascenderse a admin; no puede tocar roles ajenos | ✅ |
+| 11b | El administrador sí puede asignar roles | ✅ |
+| 12 | Las 12+ tablas del dominio tienen RLS activa | ✅ |
+| 12b | Cada sesión corre como rol no privilegiado (`current_user = authenticated`) | ✅ |
+| 12c | Anónimo sólo alcanza las áreas públicas configurables | ✅ |
+| 12d | Un cliente no lee metadatos de documentos ajenos | ✅ |
+| 12e | La auditoría registra operaciones y es de sólo lectura (el borrado no borra) | ✅ |
+
+**Dos bugs reales encontrados y corregidos por esta suite:**
+1. El trigger de auditoría usaba `old.id`, pero `user_roles` no tiene columna `id`
+   (su PK es `user_id`) → error en runtime. Corregido con un resolutor genérico de
+   clave primaria.
+2. La semántica de RLS es que un `UPDATE` sobre una fila invisible **no da error:
+   afecta 0 filas**. Las aserciones se reescribieron para verificar el efecto real
+   (el dato no cambia) en lugar de esperar una excepción.
+
+### 10.2 Resto de la suite — 47/47 ✅
+
+| Archivo | Tests | Qué cubre |
+|---|---|---|
+| `supabase/tests/rls.test.ts` | 34 | políticas RLS sobre Postgres real |
+| `client/src/lib/rbac.test.ts` | 7 | coherencia entre enums de la base y etiquetas de la UI; guards de rol |
+| `server/auth.logout.test.ts` | 5 | cierre de sesión (preexistente) |
+| `server/platform.test.ts` | 6 | plataforma Manus (preexistente) |
+
+### 10.3 TypeScript — 0 errores ✅
+
+`npx tsc --noEmit` → exit 0, sin errores (proyecto completo: `client/`, `server/`,
+`shared/`, `supabase/tests/`).
+
+### 10.4 Build estático — ✅
+
+`npx vite build` → `dist/public/` generado sin errores.
+
+- `index.html` + **`404.html`** (fallback de rutas del cliente, generado por un plugin
+  de Vite) + `_redirects` (Netlify/Cloudflare).
+- Bundle principal: **740 kB** (210 kB gzip).
+- Panel de administración: chunk aparte de **135 kB** (23 kB gzip), cargado sólo si se
+  entra a `/panel` (`React.lazy` + `Suspense`).
+- Las 7 imágenes originales se compilan con hash.
+
+### 10.5 Verificación en navegador — ✅
+
+Sobre el dev server (`http://localhost:3000`):
+
+| Ruta | Resultado |
+|---|---|
+| `/` | Renderiza el hero y la página institucional sin cambios ✅ |
+| `/contacto` | El formulario nuevo muestra nombre, email, teléfono, área (12 áreas), asunto, mensaje, aceptación de privacidad y honeypot ✅ |
+| `/ingresar` | Pantalla de acceso con botón de Google, email y recuperación de clave ✅ |
+| `/mi-cuenta` | Área de cliente; sin credenciales muestra el aviso de configuración faltante ✅ |
+| `/panel` | Carga el chunk diferido y muestra el aviso de configuración faltante ✅ |
+| Consola del navegador | **0 errores y 0 warnings** en todas las rutas revisadas ✅ |
+
+### 10.6 Lo que NO se pudo verificar (y por qué)
+
+No hay proyecto de Supabase con credenciales, así que **no se pudo probar contra la
+API real de Supabase**: ni el alta por Google OAuth en vivo, ni el envío de una
+consulta a través de la Edge Function desplegada, ni la descarga real de un archivo
+con URL firmada. Todo lo demás se ejecutó y se verificó.
+
+La suite de RLS es la que más cubre el riesgo: las políticas, los triggers y las
+funciones se ejecutaron contra un Postgres real, con el mismo mecanismo de
+evaluación que usa Supabase. Al cargar las credenciales, `npm test` corre la misma
+suite sin cambios y la verificación de extremo a extremo queda a un paso.
+
+## 11. Archivos agregados
+
+```
+supabase/
+  config.toml                              configuración del proyecto Supabase
+  migrations/
+    20260114000100_schema.sql              enums, 15 tablas, FKs, índices
+    20260114000200_functions_triggers.sql  helpers, triggers, auditoría, notificaciones
+    20260114000300_rls.sql                 políticas RLS por rol
+    20260114000400_storage.sql             buckets privados + policies
+    20260114000500_seed.sql                12 áreas jurídicas
+    20260114000600_rate_limit.sql          RPC de rate limiting
+    20260114000700_profiles_email.sql      email en el perfil + backfill
+  functions/submit-consultation/index.ts   Edge Function (validación + rate limit)
+  tests/harness.ts                         harness PGlite (shims auth/storage)
+  tests/rls.test.ts                        34 pruebas de seguridad
+
+client/src/
+  lib/supabase.ts                          cliente + constantes
+  lib/rbac.ts                              tipos, roles, etiquetas
+  lib/rbac.test.ts                         7 pruebas unitarias
+  contexts/AuthContext.tsx                 sesión, perfil y rol
+  pages/auth/AuthPages.tsx                 ingreso, registro, recuperación
+  pages/account/AccountArea.tsx            área de cliente
+  pages/admin/                             AdminShell + 8 módulos
+  styles/admin.css                         sistema visual del panel
+
+docs/
+  ARCHITECTURE.md                          decisiones y alternativas descartadas
+  SUPABASE_SETUP.md                        guía de instalación paso a paso
+  TECHNICAL_REPORT.md                      este informe
+
+.env.example                               variables de entorno
+client/public/_redirects                   fallback SPA (Netlify/Cloudflare)
+```
+
+**Archivos modificados:** `client/src/App.tsx`, `client/src/components/SiteShell.tsx`,
+`client/src/pages/SitePages.tsx` (sólo el componente `Contact`), `client/src/index.css`
+(2 reglas de estilo para el acceso), `client/src/lib/rbac.ts`, `vite.config.ts`
+(plugin de fallback SPA), `vitest.config.ts`, `tsconfig.json`,
+`client/public/manus-routes.json`.
+
+## 12. Limitaciones conocidas
+
+1. **Sin credenciales de Supabase no hay verificación en vivo** (ver 10.6).
+2. El **correo de las notificaciones** no está implementado: las notificaciones se
+   guardan en la tabla y se ven en la plataforma. El prompt lo planteaba como
+   "se podrá incorporar", así que queda el punto de extensión (`supabase/functions/`
+   con un proveedor como Resend, configurado desde variables de entorno).
+3. El **formulario no adjunta archivos**: la carga de documentos es desde el panel.
+4. La **recuperación de clave** depende de que el proveedor de email esté configurado
+   en Supabase.
+5. El **área de abogado** no tiene escritorio propio (se priorizó el panel y el área
+   de cliente, según lo definido); el abogado opera sobre los clientes y
+   expedientes que tiene asignados desde el panel.

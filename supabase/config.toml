@@ -1,0 +1,48 @@
+# Configuración del proyecto Supabase — Estudio Jurídico Casoratti
+# Referencia: https://supabase.com/docs/guides/local-development/cli/config
+
+project_id = "casoratti"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 17
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+# Orígenes a los que se puede redirigir después de Google OAuth o del reset de clave.
+additional_redirect_urls = ["http://localhost:3000/mi-cuenta", "http://localhost:3000/ingresar"]
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = true
+secure_password_change = true
+
+[auth.external.google]
+enabled = true
+client_id = "env(SUPABASE_AUTH_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_GOOGLE_SECRET)"
+# Los redirect URIs permitidos para Google OAuth:
+#   https://TU-PROYECTO.supabase.co/auth/v1/callback
+
+[storage]
+enabled = true
+file_size_limit = "25MiB"
+
+# La Edge Function es pública (la usan visitantes sin sesión), por eso no
+# exige JWT. La seguridad no está en el token sino en la validación, el rate
+# limiting y las políticas RLS.
+[functions.submit-consultation]
+verify_jwt = false
