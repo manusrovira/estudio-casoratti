@@ -1,0 +1,293 @@
+/* =============================================================================
+   Módulo de administración de consultas.
+
+   Estilos propios del módulo. Se apoyan en las clases ya existentes del panel
+   (admin-card, admin-table, admin-button…) y sólo agregan lo que el módulo
+   necesita: indicadores, gráfico de barras, paginación y control de IPs.
+
+   Paleta: tinta verde oscuro, papel marfil, cobre y dorado. Sin sombras
+   pesadas, sin degradados y sin esquinas redondeadas en todo.
+   ============================================================================= */
+
+/* --- Indicadores del encabezado -------------------------------------------- */
+.admin-cons-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  margin-bottom: 1.6rem;
+}
+
+.admin-cons-kpi {
+  background: #fff;
+  padding: 1rem 1.1rem 1.05rem;
+  min-width: 0;
+}
+
+.admin-cons-kpi-label {
+  display: block;
+  color: var(--muted);
+  font-size: .6rem;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.admin-cons-kpi-value {
+  display: block;
+  margin: .45rem 0 .15rem;
+  font: 1.85rem/1 Georgia, serif;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.admin-cons-kpi-hint {
+  display: block;
+  color: var(--muted);
+  font-size: .7rem;
+  line-height: 1.4;
+}
+
+.admin-cons-kpi-accent .admin-cons-kpi-value { color: var(--copper); }
+.admin-cons-kpi-strong .admin-cons-kpi-value { color: var(--gold-deep); }
+
+/* --- Gráfico de barras por día --------------------------------------------- */
+.admin-cons-chart {
+  padding: 1.4rem 1.4rem 1.1rem;
+}
+
+.admin-cons-chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 170px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 1px;
+}
+
+.admin-cons-chart-col {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 3px;
+}
+
+.admin-cons-chart-count {
+  font-size: .58rem;
+  color: var(--muted);
+  line-height: 1;
+  min-height: .58rem;
+}
+
+.admin-cons-bar {
+  width: 100%;
+  min-height: 2px;
+  background: var(--copper);
+  opacity: .78;
+  transition: opacity .2s ease;
+}
+
+.admin-cons-bar:hover { opacity: 1; }
+.admin-cons-bar-empty { background: var(--mist); }
+.admin-cons-bar-today { background: var(--ink); opacity: 1; }
+
+.admin-cons-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: .5rem;
+  color: var(--muted);
+  font-size: .62rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.admin-cons-chart-caption {
+  margin: .9rem 0 0;
+  color: var(--muted);
+  font-size: .72rem;
+}
+
+/* --- Distribución por estado ------------------------------------------------ */
+.admin-cons-status {
+  display: flex;
+  flex-direction: column;
+  gap: .85rem;
+}
+
+.admin-cons-status-row { display: block; }
+
+.admin-cons-status-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: .8rem;
+  font-size: .78rem;
+  margin-bottom: .3rem;
+}
+
+.admin-cons-status-head b { font-weight: 500; color: var(--ink); }
+.admin-cons-status-head span { color: var(--muted); font-size: .72rem; }
+
+.admin-cons-status-track {
+  height: 6px;
+  background: var(--ivory);
+  border: 1px solid var(--line);
+}
+
+.admin-cons-status-fill { height: 100%; background: var(--copper); }
+
+/* --- Paginación ------------------------------------------------------------- */
+.admin-cons-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .9rem;
+  padding: 1rem 1.4rem;
+  border-top: 1px solid var(--line);
+  background: #fcfbf8;
+}
+
+.admin-cons-pagination-info {
+  color: var(--muted);
+  font-size: .76rem;
+}
+
+.admin-cons-pagination-info b { color: var(--ink); font-weight: 500; }
+
+.admin-cons-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;
+}
+
+.admin-cons-jump {
+  display: flex;
+  align-items: flex-end;
+  gap: .4rem;
+}
+
+.admin-cons-jump .filter-field { flex-direction: row; align-items: center; gap: .4rem; }
+.admin-cons-jump .filter-field label { white-space: nowrap; }
+.admin-cons-jump input { width: 72px; }
+
+/* --- Control de solicitudes por IP ------------------------------------------ */
+.admin-cons-ip {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: .76rem;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.admin-cons-meter {
+  position: relative;
+  height: 8px;
+  background: var(--ivory);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.admin-cons-meter-fill { height: 100%; background: var(--copper); }
+.admin-cons-meter-fill-warn { height: 100%; background: #9d3b2e; }
+.admin-cons-meter-fill-ok { height: 100%; background: #3f7a5c; }
+
+.admin-cons-limit-note {
+  margin: 0 0 1rem;
+  padding: .75rem .9rem;
+  border-left: 3px solid var(--copper);
+  background: rgba(178, 119, 85, .07);
+  color: #7a4f38;
+  font-size: .78rem;
+}
+
+/* --- Detalle ---------------------------------------------------------------- */
+.admin-cons-subject {
+  display: block;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-cons-history {
+  display: flex;
+  flex-direction: column;
+  gap: .55rem;
+}
+
+.admin-cons-history-row {
+  display: flex;
+  gap: .8rem;
+  align-items: baseline;
+  padding: .5rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: .78rem;
+}
+
+.admin-cons-history-row:last-child { border-bottom: 0; }
+.admin-cons-history-row span { color: var(--muted); font-size: .7rem; white-space: nowrap; }
+.admin-cons-history-row b { font-weight: 500; color: var(--ink); }
+
+.admin-cons-ua {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: .72rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* --- Utilidades ------------------------------------------------------------- */
+.admin-cons-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.admin-cons-row-link { cursor: pointer; }
+.admin-cons-row-link:focus-visible { outline: 2px solid var(--copper); outline-offset: -2px; }
+
+/* Referencia de la tabla: es el control real para abrir el detalle. */
+.admin-cons-ref-button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--copper);
+  text-underline-offset: 3px;
+}
+
+.admin-cons-ref-button:hover { color: var(--copper); }
+
+/* --- Pantallas chicas ------------------------------------------------------- */
+@media (max-width: 1100px) {
+  .admin-cons-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 900px) {
+  .admin-cons-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-cons-chart { padding: 1.1rem 1rem .9rem; }
+  .admin-cons-chart-bars { height: 130px; gap: 2px; }
+  .admin-cons-pagination { padding: .9rem 1rem; }
+}
+
+@media (max-width: 620px) {
+  .admin-cons-kpi-value { font-size: 1.5rem; }
+  .admin-cons-subject { max-width: 14ch; }
+}

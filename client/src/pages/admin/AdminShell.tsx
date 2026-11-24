@@ -14,7 +14,7 @@ import { canAccessAdminPanel, ROLE_LABELS } from "@/lib/rbac";
 import { AuditModule } from "./AuditModule";
 import { CasesModule } from "./CasesModule";
 import { ClientsModule } from "./ClientsModule";
-import { ConsultationsModule } from "./ConsultationsModule";
+import { ConsultationsAdminModule } from "./ConsultationsAdminModule";
 import { DashboardModule } from "./DashboardModule";
 import { DocumentsModule } from "./DocumentsModule";
 import { SettingsModule } from "./SettingsModule";
@@ -53,8 +53,9 @@ const pageMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: "Fichas de clientes del estudio y su vínculo con la plataforma.",
   },
   "/panel/consultas": {
-    title: "Consultas",
-    subtitle: "Consultas recibidas desde el sitio. Sólo se ven aquí.",
+    title: "Administración de consultas",
+    subtitle:
+      "Consultas recibidas desde el sitio: listado paginado, estadísticas, control por IP e historial. Sólo se ven aquí.",
   },
   "/panel/expedientes": {
     title: "Expedientes",
@@ -205,7 +206,7 @@ export default function AdminShell() {
             <Route path="/panel" component={DashboardModule} />
             <Route path="/panel/usuarios" component={UsersModule} />
             <Route path="/panel/clientes" component={ClientsModule} />
-            <Route path="/panel/consultas" component={ConsultationsModule} />
+            <Route path="/panel/consultas" component={ConsultationsAdminModule} />
             <Route path="/panel/expedientes" component={CasesModule} />
             <Route path="/panel/documentacion" component={DocumentsModule} />
             <Route path="/panel/auditoria" component={AuditModule} />
