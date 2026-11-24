@@ -78,7 +78,7 @@ export default function SiteShell({ children }: { children: React.ReactNode }) {
           <div className="footer-column"><span className="footer-label">Explorar</span><Link href="/el-estudio">El estudio</Link><Link href="/areas">Áreas de práctica</Link><Link href="/recursos">Recursos</Link><Link href="/preguntas-frecuentes">Preguntas frecuentes</Link></div>
           <div className="footer-column"><span className="footer-label">Contacto</span><a href="tel:+543764222147">+54 3764 222147</a><a href="mailto:consultas@estudiocasoratti.com.ar">consultas@estudiocasoratti.com.ar</a><a href="https://maps.app.goo.gl/NoHK6voH2tLHuVWr5" target="_blank" rel="noreferrer">Gdor. Bermúdez 2618<br />Posadas, Misiones</a></div>
         </div>
-        <div className="footer-bottom"><span>© {new Date().getFullYear()} Estudio Jurídico Casoratti</span><span>La información de este sitio es general y no reemplaza una consulta profesional.</span></div>
+        <div className="footer-bottom"><span>© {new Date().getFullYear()} Estudio Jurídico Casoratti</span></div>
       </footer>
     </div>
   );

@@ -9,15 +9,13 @@ import heroImage from "@/assets/casoratti-hero.jpg";
 import officeImage from "@/assets/equipo-reunion.jpg";
 // Sala de juntas: galería de El estudio y página Valores.
 import teamImage from "@/assets/equipo-sala.jpg";
-// Integrantes del estudio: galería lateral, Áreas, Recursos y Contacto.
+// Integrantes del estudio: galería lateral, Áreas y Contacto.
 import detailImage from "@/assets/equipo-pasillo.jpg";
-// Audiencia: imagen institucional del estudio.
-import lawImage from "@/assets/equipo-audiencia-horizontal.jpg";
 // Balanza y martillo de justicia: imagen de los valores de la firma.
 import justiceImage from "@/assets/justice-scale.jpg";
 
 // Este mapa permite que cada página reutilice una imagen con una intención clara.
-const images = { hero: heroImage, office: officeImage, team: teamImage, detail: detailImage, law: lawImage, justice: justiceImage };
+const images = { hero: heroImage, office: officeImage, team: teamImage, detail: detailImage, justice: justiceImage };
 
 function Eyebrow({ children }: { children: React.ReactNode }) { return <span className="eyebrow"><i />{children}</span>; }
 function ArrowLink({ href, children, light = false }: { href: string; children: React.ReactNode; light?: boolean }) { return <Link className={light ? "arrow-link light" : "arrow-link"} href={href}>{children}<ArrowUpRight size={16} /></Link>; }
@@ -64,7 +62,7 @@ export function Values() {
   return <><PageIntro eyebrow="Equipo y valores" title={<>La forma de hacer las cosas <em>también importa.</em></>} description="Nuestro trabajo se apoya en principios que orientan cada conversación, cada escrito y cada decisión." image={images.justice} imageAlt="Balanza y martillo de justicia sobre la mesa del estudio"/><section className="values-section section-pad"><SectionHeading eyebrow="Lo que nos guía" title={<>Cuatro ideas. <em>Un mismo compromiso.</em></>}/><div className="values-grid">{values.map(({ icon: Icon, title, text }, index) => <div className="value-card reveal" key={title}><span className="value-number">0{index + 1}</span><Icon size={28}/><h3>{title}</h3><p>{text}</p></div>)}</div></section><section className="manifesto"><div className="manifesto-inner reveal"><Eyebrow>Manifiesto</Eyebrow><h2>“La confianza no se pide.<br /><em>Se demuestra en el proceso.”</em></h2><p>Estudio Jurídico Casoratti</p></div></section></>;
 }
 
-export function Resources() { return <><PageIntro eyebrow="Centro de recursos" title={<>Información para <em>avanzar.</em></>} description="Guías breves para ordenar una primera conversación jurídica y tomar decisiones con más contexto." image={images.law} imageAlt="El equipo del estudio en una audiencia"/><section className="resources-section section-pad"><div className="resource-feature reveal"><div><Eyebrow>Para empezar</Eyebrow><h2>La información correcta en el momento <em>correcto.</em></h2><p>Estos contenidos son generales y orientativos. Cada caso requiere analizar sus circunstancias, documentación y plazos.</p></div><BookOpen size={42}/></div><div className="resource-list">{resources.map((resource, index) => <article className="resource-item reveal" key={resource.title}><span className="resource-index">0{index + 1}</span><div><span className="resource-tag">{resource.tag}</span><h3>{resource.title}</h3><p>{resource.text}</p></div><ArrowUpRight size={19}/></article>)}</div><div className="resource-note"><FileText size={20}/><p>Para conocer la normativa oficial, consultá el <a href="https://www.argentina.gob.ar/justicia/derechofacil" target="_blank" rel="noreferrer">portal Derecho Fácil</a> y la legislación publicada por organismos públicos.</p></div></section></>;
+export function Resources() { return <><PageIntro eyebrow="Centro de recursos" title={<>Información para <em>avanzar.</em></>} description="Guías breves para ordenar una primera conversación jurídica y tomar decisiones con más contexto." image={images.office} imageAlt="Dos profesionales del estudio ordenando documentación para una consulta"/><section className="resources-section section-pad"><div className="resource-feature reveal"><div><Eyebrow>Para empezar</Eyebrow><h2>La información correcta en el momento <em>correcto.</em></h2><p>Estos contenidos son generales y orientativos. Cada caso requiere analizar sus circunstancias, documentación y plazos.</p></div><BookOpen size={42}/></div><div className="resource-list">{resources.map((resource, index) => <article className="resource-item reveal" key={resource.title}><span className="resource-index">0{index + 1}</span><div><span className="resource-tag">{resource.tag}</span><h3>{resource.title}</h3><p>{resource.text}</p></div><ArrowUpRight size={19}/></article>)}</div><div className="resource-note"><FileText size={20}/><p>Para conocer la normativa oficial, consultá el <a href="https://www.argentina.gob.ar/justicia/derechofacil" target="_blank" rel="noreferrer">portal Derecho Fácil</a> y la legislación publicada por organismos públicos.</p></div></section></>;
 }
 
 export function FAQ() {
