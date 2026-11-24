@@ -1,7 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-:root { --ink:#142b2d; --ink-2:#1e3b3d; --forest:#385653; --copper:#b27755; --copper-light:#d4a486; --ivory:#f4f0e8; --paper:#faf8f3; --mist:#e7e5dd; --muted:#667271; --line:rgba(20,43,45,.16); --radius:0.65rem; --background:var(--paper); --foreground:var(--ink); --primary:var(--ink); --primary-foreground:var(--paper); --border:var(--line); --ring:var(--copper); }
+:root { --ink:#142b2d; --ink-2:#1e3b3d; --forest:#385653; --copper:#b27755; --copper-light:#d4a486; --ivory:#f4f0e8; --paper:#faf8f3; --mist:#e7e5dd; --muted:#5d6968; --line:rgba(20,43,45,.16); --radius:0.65rem; --background:var(--paper); --foreground:var(--ink); --primary:var(--ink); --primary-foreground:var(--paper); --border:var(--line); --ring:var(--copper);
+/* Acentos secundarios: dorado y lila. El cobre sigue siendo el acento principal. */
+/* --gold se usa sobre fondos oscuros y en elementos grandes o decorativos. */
+/* --gold-deep y --lilac superan 4.5:1 sobre --paper, --ivory y --lilac-soft. */
+--gold:#c9a44c; --gold-deep:#7d611a; --gold-soft:#efdfae; --lilac:#7462a8; --lilac-mid:#a294cd; --lilac-soft:#e9e4f5; }
 @custom-variant dark (&:is(.dark *));
 @theme inline { --color-background:var(--background); --color-foreground:var(--foreground); --color-primary:var(--primary); --color-primary-foreground:var(--primary-foreground); --color-border:var(--border); --color-ring:var(--ring); }
 * { box-sizing:border-box; }
@@ -19,6 +23,9 @@ button { border:0; }
 .site-header { background:var(--paper); position:relative; z-index:30; }
 .topline { max-width:1320px; margin:auto; padding:.7rem 3.5rem; display:flex; justify-content:space-between; color:var(--muted); border-bottom:1px solid var(--line); font-size:.67rem; letter-spacing:.13em; text-transform:uppercase; }
 .topline a { display:flex; gap:.4rem; align-items:center; color:var(--ink); }
+.topline .topline-phone { transition:color .25s ease; }
+.topline .topline-phone:hover { color:var(--gold-deep); }
+.topline .topline-tag { border:1px solid var(--gold-soft); background:var(--ivory); color:var(--gold-deep); border-radius:999px; padding:.1rem .45rem; font-size:.55rem; letter-spacing:.14em; }
 .nav-wrap { max-width:1320px; margin:auto; padding:1.25rem 3.5rem; display:flex; justify-content:space-between; align-items:center; }
 .wordmark { display:flex; align-items:center; gap:.8rem; letter-spacing:.08em; }
 .wordmark-mark { display:grid; place-items:center; width:37px; height:37px; border:1px solid var(--copper); color:var(--copper); font:italic 1.35rem/1 Georgia,serif; transform:rotate(-8deg); }
@@ -28,7 +35,7 @@ button { border:0; }
 .main-nav { display:flex; align-items:center; gap:1.6rem; font-size:.76rem; }
 .main-nav a { color:var(--muted); transition:color .25s ease; }
 .main-nav a:hover, .main-nav a.active { color:var(--ink); }
-.main-nav a.active:after { content:""; display:block; height:1px; background:var(--copper); margin-top:.3rem; }
+/* El subrayado de la navegación se define en el bloque de acentos, más abajo. */
 .main-nav .nav-cta { display:flex; align-items:center; gap:.4rem; color:var(--ink); border-left:1px solid var(--line); padding-left:1.5rem; }
 .main-nav .nav-account { color:var(--copper); border-bottom:1px solid rgba(178,119,85,.4); padding-bottom:.2rem; }
 .main-nav .nav-account:hover { color:var(--ink); }
@@ -61,7 +68,7 @@ h1 em,h2 em,h3 em { color:var(--copper); font-style:italic; }
 .hero-premium { max-width:none; min-height:clamp(650px, calc(100svh - 108px), 860px); padding:0; display:block; background:var(--ink); }
 .hero-premium .hero-visual { min-height:inherit; height:100%; padding:0; }
 .hero-premium .hero-image-wrap { height:clamp(650px, calc(100svh - 108px), 860px); }
-.hero-premium .hero-image-wrap:before { content:""; position:absolute; inset:0; z-index:1; background:linear-gradient(90deg, rgba(7,16,19,.9) 0%, rgba(7,16,19,.68) 28%, rgba(7,16,19,.12) 68%), linear-gradient(0deg, rgba(7,16,19,.52), transparent 42%); }
+.hero-premium .hero-image-wrap:before { content:""; position:absolute; inset:0; z-index:1; background:linear-gradient(90deg, rgba(7,16,19,.9) 0%, rgba(7,16,19,.68) 28%, rgba(7,16,19,.12) 68%), linear-gradient(0deg, rgba(7,16,19,.52), transparent 42%), linear-gradient(110deg, rgba(210,164,134,.1), transparent 55%); }
 .hero-premium .hero-image-wrap:after { z-index:2; background:linear-gradient(110deg, rgba(210,164,134,.1), transparent 55%); mix-blend-mode:screen; }
 .hero-premium .hero-image-wrap img { filter:saturate(.84) contrast(1.04) brightness(.86); animation:hero-drift 16s ease-in-out infinite alternate; transform-origin:center; }
 .hero-premium .hero-copy { position:absolute; left:max(3.5rem, calc((100vw - 1320px)/2 + 3.5rem)); bottom:clamp(5.5rem, 13vh, 9rem); z-index:4; width:min(640px, 46vw); padding:0; color:var(--paper); }
@@ -101,7 +108,7 @@ h1 em,h2 em,h3 em { color:var(--copper); font-style:italic; }
 .practice-arrow { display:grid; place-items:center; justify-self:end; color:var(--copper); }
 .center-link { text-align:center; margin-top:2.5rem; }
 .split-feature { display:grid; grid-template-columns:1fr 1fr; min-height:650px; background:var(--ivory); }
-.split-image { min-height:600px; position:relative; }
+.split-image { min-height:600px; position:relative; overflow:hidden; }
 .split-image img { height:100%; filter:saturate(.65); }
 .vertical-label { position:absolute; right:1.2rem; bottom:1.2rem; writing-mode:vertical-rl; transform:rotate(180deg); color:white; font-size:.6rem; letter-spacing:.16em; }
 .split-copy { padding:7rem clamp(3rem, 8vw, 9rem) 5rem 6rem; }
@@ -296,7 +303,7 @@ h1 em,h2 em,h3 em { color:var(--copper); font-style:italic; }
 @media (prefers-reduced-motion:reduce) { *,*:before,*:after { animation-duration:.01ms!important; animation-iteration-count:1!important; scroll-behavior:auto!important; transition-duration:.01ms!important; } .reveal { opacity:1; transform:none; } }
 @media (max-width:900px) { .topline,.nav-wrap,.hero,.page-intro,.content-section,.studio-gallery,.timeline-section,.detail-section,.site-footer { padding-left:1.5rem; padding-right:1.5rem; } .topline { padding-top:.55rem; padding-bottom:.55rem; } .main-nav { gap:1rem; } .main-nav .nav-cta { padding-left:1rem; } .hero { grid-template-columns:1fr; padding-top:3.5rem; min-height:auto; } .hero-copy { padding:0; } .hero-visual { margin-top:3rem; padding-left:2rem; } .hero-image-wrap { height:450px; } .hero-scroll { left:1.5rem; bottom:1rem; } .statement-section,.section-pad,.contact-band,.info-strip,.map-panel { padding-left:1.5rem; padding-right:1.5rem; } .statement-section { grid-template-columns:11% 1fr; } .statement-number { display:none; } .section-pad { padding-top:5.5rem; padding-bottom:5.5rem; } .split-copy { padding:5rem 2.5rem; } .page-intro { padding-top:4rem; padding-bottom:5rem; } .page-intro-image { height:300px; } .content-section,.timeline-section,.detail-section,.faq-section,.contact-section { grid-template-columns:1fr; gap:3rem; } .studio-gallery { grid-template-columns:1fr; } .gallery-main { min-height:500px; } .gallery-aside { display:grid; grid-template-columns:1fr 1fr; } .timeline-section { padding-top:5rem; padding-bottom:5rem; } .detail-sidebar { border-right:0; border-bottom:1px solid var(--line); padding:0 0 1.5rem; flex-direction:row; flex-wrap:wrap; align-items:center; } .sidebar-label { width:100%; margin:.5rem 0; } .detail-sidebar a:last-child { margin-top:0; } .values-grid { grid-template-columns:repeat(2,1fr); } .value-card:nth-child(2) { border-right:0; } .value-card:nth-child(-n+2) { border-bottom:1px solid var(--line); } .faq-section,.contact-section { padding-top:5rem; padding-bottom:5rem; } .footer-main { grid-template-columns:1fr 1fr; gap:2.5rem; } .footer-brand { grid-column:1/-1; } }
 .faq-answer > p { min-height:0; transition:opacity .25s ease; }
-@media (max-width:640px) { body { font-size:15px; } .topline { padding-left:1rem; padding-right:1rem; font-size:.55rem; } .topline span { display:none; } .topline { justify-content:flex-end; } .nav-wrap { padding:1rem; } .mobile-toggle { display:block; } .main-nav { position:absolute; left:0; right:0; top:100%; background:var(--paper); padding:1.2rem 1rem 1.5rem; flex-direction:column; align-items:flex-start; gap:.9rem; border-bottom:1px solid var(--line); transform:translateY(-10px); opacity:0; pointer-events:none; transition:.25s ease; } .main-nav.is-open { transform:none; opacity:1; pointer-events:auto; } .main-nav a { font-size:.8rem; } .main-nav .nav-cta { border-left:0; border-top:1px solid var(--line); padding:1rem 0 0; width:100%; } .hero { padding:3.5rem 1rem 5rem; } .hero h1 { font-size:3.55rem; } .hero-actions { align-items:flex-start; flex-direction:column; gap:1.2rem; } .hero-visual { padding-left:1rem; margin-top:2rem; } .hero-image-wrap { height:370px; } .hero-side-note { left:-.1rem; } .hero-scroll { left:1rem; } .statement-section { padding:5rem 1rem; grid-template-columns:1fr; } .statement-mark { font-size:5rem; margin-bottom:1rem; } .statement-copy h2 { font-size:2.5rem; } .section-pad { padding-left:1rem; padding-right:1rem; } .practice-row { grid-template-columns:2.2rem 1fr 1.5rem; gap:.5rem; } .practice-row p { display:none; } .practice-title h3 { font-size:1.2rem; } .split-feature { grid-template-columns:1fr; } .split-image { min-height:360px; } .split-copy { padding:4rem 1rem; } .contact-band { padding:4.5rem 1rem; } .contact-band-inner { align-items:flex-start; gap:2rem; flex-direction:column; } .circle-cta { width:112px; height:112px; align-self:flex-end; margin-top:-1rem; } .page-intro { display:block; padding:3.5rem 1rem 4.5rem; } .page-intro h1 { font-size:3.55rem; } .page-intro-image { margin-top:2.5rem; height:245px; } .content-section,.timeline-section,.detail-section,.site-footer { padding-left:1rem; padding-right:1rem; } .content-section { padding-top:1rem; padding-bottom:5rem; display:block; } .content-lead { gap:1rem; margin-bottom:2.5rem; } .content-lead h2 { font-size:2.55rem; } .studio-gallery { padding-left:1rem; padding-right:1rem; padding-bottom:5rem; } .gallery-main { min-height:390px; } .gallery-aside { display:flex; } .gallery-aside img { height:220px; } .timeline-section { display:block; } .timeline { margin-top:3rem; } .areas-intro { gap:1rem; } .area-grid { display:block; } .area-card { min-height:225px; border-right:0!important; } .info-strip { padding:1rem; display:block; } .info-strip>div,.info-strip>div:first-child { border-right:0; border-bottom:1px solid rgba(250,248,243,.18); padding:1.2rem 0; } .detail-section { padding-top:1rem; padding-bottom:5rem; } .matter-grid { grid-template-columns:1fr; } .values-grid { grid-template-columns:1fr; } .value-card,.value-card:nth-child(2) { border-right:0; border-bottom:1px solid var(--line); min-height:245px; } .value-card:last-child { border-bottom:0; } .manifesto { padding:5rem 1rem; } .manifesto h2 { font-size:2.7rem; } .resource-feature { padding:2rem 1.3rem; } .resource-item { grid-template-columns:2rem 1fr; } .resource-item>svg { display:none; } .resource-item h3 { font-size:1.35rem; } .faq-item button { grid-template-columns:1fr auto; } .faq-category { grid-column:1/-1; } .faq-answer p { padding-right:0; } .contact-section { padding-left:1rem; padding-right:1rem; } .contact-form-wrap { padding:2rem 1.2rem; } .map-panel { padding-left:1rem; padding-right:1rem; padding-bottom:5rem; } .map-iframe { height:290px; } .map-details { align-items:flex-start; flex-direction:column; padding:1.5rem; } .map-details h2 { font-size:1.4rem; } .site-footer { padding-top:4rem; } .footer-main { display:block; } .footer-column { margin-top:2.5rem; } .footer-bottom { display:block; } .footer-bottom span { display:block; margin-top:.5rem; } }
+@media (max-width:640px) { body { font-size:15px; } .topline { padding-left:1rem; padding-right:1rem; font-size:.55rem; } .topline span:not(.topline-tag) { display:none; } .topline { justify-content:flex-end; } .nav-wrap { padding:1rem; } .mobile-toggle { display:block; } .main-nav { position:absolute; left:0; right:0; top:100%; background:var(--paper); padding:1.2rem 1rem 1.5rem; flex-direction:column; align-items:flex-start; gap:.9rem; border-bottom:1px solid var(--line); transform:translateY(-10px); opacity:0; pointer-events:none; transition:.25s ease; } .main-nav.is-open { transform:none; opacity:1; pointer-events:auto; } .main-nav a { font-size:.8rem; } .main-nav .nav-cta { border-left:0; border-top:1px solid var(--line); padding:1rem 0 0; width:100%; } .hero { padding:3.5rem 1rem 5rem; } .hero h1 { font-size:3.55rem; } .hero-actions { align-items:flex-start; flex-direction:column; gap:1.2rem; } .hero-visual { padding-left:1rem; margin-top:2rem; } .hero-image-wrap { height:370px; } .hero-side-note { left:-.1rem; } .hero-scroll { left:1rem; } .statement-section { padding:5rem 1rem; grid-template-columns:1fr; } .statement-mark { font-size:5rem; margin-bottom:1rem; } .statement-copy h2 { font-size:2.5rem; } .section-pad { padding-left:1rem; padding-right:1rem; } .practice-row { grid-template-columns:2.2rem 1fr 1.5rem; gap:.5rem; } .practice-row p { display:none; } .practice-title h3 { font-size:1.2rem; } .split-feature { grid-template-columns:1fr; } .split-image { min-height:360px; } .split-copy { padding:4rem 1rem; } .contact-band { padding:4.5rem 1rem; } .contact-band-inner { align-items:flex-start; gap:2rem; flex-direction:column; } .circle-cta { width:112px; height:112px; align-self:flex-end; margin-top:-1rem; } .page-intro { display:block; padding:3.5rem 1rem 4.5rem; } .page-intro h1 { font-size:3.55rem; } .page-intro-image { margin-top:2.5rem; height:245px; } .content-section,.timeline-section,.detail-section,.site-footer { padding-left:1rem; padding-right:1rem; } .content-section { padding-top:1rem; padding-bottom:5rem; display:block; } .content-lead { gap:1rem; margin-bottom:2.5rem; } .content-lead h2 { font-size:2.55rem; } .studio-gallery { padding-left:1rem; padding-right:1rem; padding-bottom:5rem; } .gallery-main { min-height:390px; } .gallery-aside { display:flex; } .gallery-aside img { height:220px; } .timeline-section { display:block; } .timeline { margin-top:3rem; } .areas-intro { gap:1rem; } .area-grid { display:block; } .area-card { min-height:225px; border-right:0!important; } .info-strip { padding:1rem; display:block; } .info-strip>div,.info-strip>div:first-child { border-right:0; border-bottom:1px solid rgba(250,248,243,.18); padding:1.2rem 0; } .detail-section { padding-top:1rem; padding-bottom:5rem; } .matter-grid { grid-template-columns:1fr; } .values-grid { grid-template-columns:1fr; } .value-card,.value-card:nth-child(2) { border-right:0; border-bottom:1px solid var(--line); min-height:245px; } .value-card:last-child { border-bottom:0; } .manifesto { padding:5rem 1rem; } .manifesto h2 { font-size:2.7rem; } .resource-feature { padding:2rem 1.3rem; } .resource-item { grid-template-columns:2rem 1fr; } .resource-item>svg { display:none; } .resource-item h3 { font-size:1.35rem; } .faq-item button { grid-template-columns:1fr auto; } .faq-category { grid-column:1/-1; } .faq-answer p { padding-right:0; } .contact-section { padding-left:1rem; padding-right:1rem; } .contact-form-wrap { padding:2rem 1.2rem; } .map-panel { padding-left:1rem; padding-right:1rem; padding-bottom:5rem; } .map-iframe { height:290px; } .map-details { align-items:flex-start; flex-direction:column; padding:1.5rem; } .map-details h2 { font-size:1.4rem; } .site-footer { padding-top:4rem; } .footer-main { display:block; } .footer-column { margin-top:2.5rem; } .footer-bottom { display:block; } .footer-bottom span { display:block; margin-top:.5rem; } }
 .detail-method,.detail-documents { grid-template-columns:1fr; gap:2rem; }
 @media (max-width:640px) { .detail-method,.detail-documents { margin-top:4rem; padding:2rem 1.2rem; } .detail-documents { display:block; } .detail-documents ul { margin-top:2rem; } .detail-faq { margin-top:4rem; } .detail-faq summary { font-size:.98rem; } }
 .hero-premium { padding:0!important; min-height:clamp(620px, calc(100svh - 92px), 780px); }
@@ -304,3 +311,122 @@ h1 em,h2 em,h3 em { color:var(--copper); font-style:italic; }
 .hero-premium .hero-image-wrap { height:clamp(620px, calc(100svh - 92px), 780px); }
 @media (max-width:900px) { .hero-premium .hero-copy { left:1.5rem; width:min(600px, 70vw); bottom:5rem; } .hero-premium .hero-stamp { right:1.5rem; } .hero-premium .hero-side-note { right:1rem; } .hero-premium .hero-scroll { left:1.5rem; } }
 @media (max-width:640px) { .hero-premium .hero-copy { left:1rem; right:1rem; width:auto; bottom:4.5rem; } .hero-premium .hero-copy h1 { font-size:3.4rem; } .hero-premium .hero-copy>p { max-width:320px; font-size:.9rem; } .hero-premium .hero-stamp { right:1rem; bottom:1.4rem; padding:.7rem .8rem; font-size:.62rem; } .hero-premium .hero-side-note { display:none; } .hero-premium .hero-scroll { left:1rem; bottom:1rem; } }
+
+/* ==========================================================================
+   Acentos secundarios: dorado y lila. El cobre sigue siendo el acento principal.
+   Los tokens --gold-deep y --lilac superan 4.5:1 sobre --paper; --gold y
+   --lilac-mid se usan sobre fondos oscuros o en elementos grandes.
+   ========================================================================== */
+
+/* --- Dorado: numerales y acentos finos ---------------------------------- */
+.practice-number,
+.large-index,
+.area-card-number,
+.value-number,
+.resource-index,
+.timeline-item>span,
+.matter-grid span,
+.principle-list span,
+.detail-step-list span,
+.resource-tag,
+.faq-category,
+.detail-callout svg,
+.detail-disclaimer svg,
+.success-state>svg { color:var(--gold-deep); }
+.detail-callout a { border-bottom-color:var(--gold-deep); }
+.map-link { color:var(--gold-deep); border-bottom-color:var(--gold-deep); }
+
+/* --- Dorado: superficies oscuras ---------------------------------------- */
+.statement-mark { color:var(--gold); }
+.statement-number { color:var(--gold); }
+.footer-brand h2 span { color:var(--gold); }
+
+/* --- Dorado: el hero es el acento dorado del primer pantallazo ------------
+   La imagen, la composición y los textos se mantienen tal como la versión
+   anterior; sólo cambia el acento cromático del cobre al dorado. */
+.hero-premium .hero-copy h1 em { color:var(--gold); }
+.hero-premium .eyebrow { color:var(--gold); }
+.hero-premium .eyebrow i { background:var(--gold); }
+.hero-premium .hero-stamp { color:var(--gold-soft); border-color:rgba(233,207,138,.45); }
+.hero-premium .hero-side-note { color:var(--gold); }
+.hero-premium .hero-scroll { color:var(--gold-soft); }
+.hero-premium .scroll-line { background:var(--gold); }
+.hero-premium .button-copper { background:var(--gold); color:var(--ink); }
+.hero-premium .button-copper:hover { background:var(--gold-soft); }
+.area-card:hover .area-card-number,
+.value-card:hover .value-number { color:var(--gold); }
+
+/* --- Lila: veladuras sólo sobre superficies oscuras (donde el texto claro
+   mantiene el contraste) y como acento no textual sobre las claras. ------ */
+.statement-section { background:radial-gradient(1100px 520px at 8% 16%, rgba(162,148,205,.16), transparent 62%), radial-gradient(900px 460px at 96% 84%, rgba(201,164,76,.10), transparent 60%), var(--ink); }
+.split-feature { background:var(--ivory); border-top:2px solid var(--lilac-mid); }
+.detail-callout { background:var(--ivory); border-left:3px solid var(--lilac); }
+.quote-card { background:linear-gradient(160deg, var(--ink) 0%, #211d34 100%); }
+.manifesto { background:var(--copper); }
+.area-card:hover,
+.value-card:hover { background:linear-gradient(160deg, #16282a 0%, #221c36 100%); }
+/* El degradado lila del hover necesita transición propia: la regla .reveal la pisa. */
+.area-card.reveal,
+.value-card.reveal { transition:opacity .8s ease, transform .8s ease, background .3s ease; }
+
+/* --- Formas de pago (bloque de contacto) -------------------------------- */
+.contact-payment { margin-top:2.2rem; padding-top:1.6rem; border-top:1px solid var(--line); }
+.contact-payment strong { display:block; font:1rem Georgia,serif; }
+.contact-payment span { display:block; color:var(--muted); font-size:.72rem; line-height:1.8; margin-top:.55rem; }
+.contact-payment p { color:var(--muted); font-size:.75rem; margin:.9rem 0 0; }
+.contact-payment b { color:var(--gold-deep); font-weight:600; }
+
+/* ==========================================================================
+   Animaciones. La regla global de prefers-reduced-motion las desactiva.
+   ========================================================================== */
+@keyframes rise-in { from { opacity:0; transform:translateY(22px); } to { opacity:1; transform:none; } }
+@keyframes sheen { from { transform:translate3d(-30%,0,0); } to { transform:translate3d(30%,0,0); } }
+@keyframes float-soft { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-8px); } }
+@keyframes ring-spin { to { transform:rotate(360deg); } }
+@keyframes slow-pan { from { transform:scale(1.02); } to { transform:scale(1.1) translateY(-2%); } }
+
+/* Entrada escalonada del contenido del hero */
+.hero-premium .hero-copy>* { animation:rise-in .9s cubic-bezier(.22,.61,.36,1) both; }
+.hero-premium .hero-copy>*:nth-child(1) { animation-delay:.05s; }
+.hero-premium .hero-copy>*:nth-child(2) { animation-delay:.16s; }
+.hero-premium .hero-copy>*:nth-child(3) { animation-delay:.28s; }
+.hero-premium .hero-copy>*:nth-child(4) { animation-delay:.40s; }
+
+/* Barrido dorado sobre la imagen del hero y sobre la banda de contacto.
+   El barrido se hace con transform sobre un velo más ancho que el marco:
+   así el navegador lo compone en GPU y no repinta la superficie completa. */
+.hero-premium .hero-image-wrap:after { content:""; position:absolute; top:0; bottom:0; left:-60%; width:220%; z-index:2; background:linear-gradient(100deg, transparent 34%, rgba(233,207,138,.13) 47%, rgba(244,238,222,.17) 50%, rgba(233,207,138,.13) 53%, transparent 66%); mix-blend-mode:screen; animation:sheen 18s ease-in-out infinite; pointer-events:none; }
+.contact-band { position:relative; overflow:hidden; }
+.contact-band:before { content:""; position:absolute; top:0; bottom:0; left:-60%; width:220%; background:linear-gradient(100deg, transparent 38%, rgba(240,222,168,.24) 50%, transparent 62%); mix-blend-mode:screen; animation:sheen 14s ease-in-out infinite; pointer-events:none; }
+
+/* Comilla del statement con flotación suave */
+.statement-mark { animation:float-soft 7s ease-in-out infinite; }
+
+/* Anillo dorado giratorio en el CTA circular */
+.circle-cta { position:relative; border-color:rgba(233,207,138,.5); transition:background .3s ease, color .3s ease, border-color .3s ease, box-shadow .3s ease; }
+.circle-cta:before { content:""; position:absolute; inset:-7px; border-radius:50%; border:1px solid transparent; border-top-color:rgba(233,207,138,.85); border-right-color:rgba(233,207,138,.3); animation:ring-spin 9s linear infinite; pointer-events:none; }
+.circle-cta:hover { border-color:var(--gold); box-shadow:0 0 0 7px rgba(201,164,76,.16); }
+
+/* Subrayado que crece en la navegación (no se aplica a los enlaces que ya
+   llevan su propia línea: cuenta y CTA). */
+.main-nav a { position:relative; }
+.main-nav a:not(.nav-account):not(.nav-cta):after { content:""; display:block; position:absolute; left:0; right:0; bottom:-5px; height:1px; margin-top:0; background:var(--gold-deep); transform:scaleX(0); transform-origin:left; transition:transform .32s cubic-bezier(.22,.61,.36,1); }
+.main-nav a:not(.nav-account):not(.nav-cta):hover:after,
+.main-nav a:not(.nav-account):not(.nav-cta).active:after { transform:scaleX(1); }
+.main-nav a.active:after { background:var(--copper); }
+
+/* Flecha que avanza al pasar por una fila de práctica */
+.practice-row .practice-arrow { transition:transform .3s cubic-bezier(.22,.61,.36,1); }
+.practice-row:hover .practice-arrow { transform:translateX(7px); }
+
+/* Barrido lento sobre la imagen partida */
+.split-image img { animation:slow-pan 26s ease-in-out infinite alternate; }
+
+/* Escalonado de la aparición en las grillas */
+.area-grid .reveal:nth-child(4n+2), .values-grid .reveal:nth-child(4n+2) { transition-delay:.07s; }
+.area-grid .reveal:nth-child(4n+3), .values-grid .reveal:nth-child(4n+3) { transition-delay:.14s; }
+.area-grid .reveal:nth-child(4n+4), .values-grid .reveal:nth-child(4n+4) { transition-delay:.21s; }
+
+/* En pantallas pequeñas el anillo y el barrido se simplifican */
+@media (max-width:640px) { .contact-band:before, .hero-premium .hero-image-wrap:after { animation:none; } .circle-cta:before { inset:-5px; } }
+

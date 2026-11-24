@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { ArrowUpRight, Menu, Phone, X } from "lucide-react";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { canAccessAdminPanel } from "@/lib/rbac";
+import { studioContact, whatsappLink } from "@/data/siteContent";
 
 const navItems = [
   { href: "/", label: "Inicio" },
@@ -45,7 +46,9 @@ export default function SiteShell({ children }: { children: React.ReactNode }) {
       <header className="site-header">
         <div className="topline">
           <span>Posadas · Misiones · Argentina</span>
-          <a href="tel:+543764222147"><Phone size={13} /> 3764 222147</a>
+          <a className="topline-phone" href={whatsappLink()} target="_blank" rel="noreferrer" aria-label={`Escribir por WhatsApp al ${studioContact.phoneDisplayIntl} para solicitar una consulta`} title="Escribir por WhatsApp">
+            <Phone size={13} /> {studioContact.phoneDisplay} <span className="topline-tag">WhatsApp</span>
+          </a>
         </div>
         <div className="nav-wrap">
           <Link href="/" className="wordmark" aria-label="Estudio Jurídico Casoratti, inicio">
@@ -68,9 +71,9 @@ export default function SiteShell({ children }: { children: React.ReactNode }) {
       <footer className="site-footer">
         <div className="footer-main">
           <div className="footer-brand">
-            <span className="footer-kicker">Estudio Jurídico</span>
+            <span className="footer-kicker">Estudio Jurídico Integral</span>
             <h2>Casoratti<span>.</span></h2>
-            <p>Derecho con criterio. Atención personalizada en Posadas y toda la provincia de Misiones.</p>
+            <p>Derecho con criterio. Atención personalizada en Posadas y en toda la provincia de Misiones.</p>
           </div>
           <div className="footer-column"><span className="footer-label">Explorar</span><Link href="/el-estudio">El estudio</Link><Link href="/areas">Áreas de práctica</Link><Link href="/recursos">Recursos</Link><Link href="/preguntas-frecuentes">Preguntas frecuentes</Link></div>
           <div className="footer-column"><span className="footer-label">Contacto</span><a href="tel:+543764222147">+54 3764 222147</a><a href="mailto:consultas@estudiocasoratti.com.ar">consultas@estudiocasoratti.com.ar</a><a href="https://maps.app.goo.gl/NoHK6voH2tLHuVWr5" target="_blank" rel="noreferrer">Gdor. Bermúdez 2618<br />Posadas, Misiones</a></div>
