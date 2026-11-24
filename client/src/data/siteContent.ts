@@ -327,6 +327,7 @@ export const studioContact = {
   phoneE164: "+543764222147",
   phoneDisplay: "3764 222147",
   phoneDisplayIntl: "+54 3764 222147",
+  email: "casorattiestudiojuridico@gmail.com",
   whatsappNumber: "543764222147",
   whatsappGreeting:
     "Hola, quiero solicitar una consulta. ¿Me pueden indicar la disponibilidad y cómo coordinar la primera entrevista?",

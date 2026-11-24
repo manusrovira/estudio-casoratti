@@ -675,7 +675,7 @@ export function SettingsModule() {
                   id="lawyer-email"
                   type="email"
                   className="admin-input"
-                  placeholder="estudio@casoratti.com.ar"
+                  placeholder="casorattiestudiojuridico@gmail.com"
                   value={lawyerForm.email}
                   onChange={(event) =>
                     setLawyerForm((previous) => ({

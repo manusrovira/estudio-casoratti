@@ -269,6 +269,8 @@ h1 em,h2 em,h3 em { color:var(--copper); font-style:italic; }
 .contact-detail strong,.contact-detail span { display:block; }
 .contact-detail strong { font:1rem Georgia,serif; }
 .contact-detail span { color:var(--muted); font-size:.75rem; margin-top:.2rem; }
+.contact-mail { color:var(--ink); border-bottom:1px solid var(--copper); transition:color .25s ease,border-color .25s ease; }
+.contact-mail:hover { color:var(--copper); }
 .map-link { display:inline-flex; align-items:center; gap:.45rem; border-bottom:1px solid var(--copper); padding-bottom:.35rem; color:var(--copper); font-size:.72rem; margin-top:1rem; }
 .contact-form-wrap { background:var(--paper); padding:3rem; min-height:560px; }
 .contact-form h2 { font-size:clamp(2.2rem,3.5vw,3.7rem); margin:1.2rem 0 2rem; letter-spacing:-.055em; }
