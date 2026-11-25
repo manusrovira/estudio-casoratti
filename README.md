@@ -22,22 +22,24 @@ Platform configuration is readable and editable through `webdev.config`. Default
 | Sitio público | **https://estudio-casoratti.vercel.app** |
 | Panel de administración | **https://estudio-casoratti.vercel.app/panel** (sólo administrador) |
 | Repositorio | **https://github.com/manusrovira/estudio-casoratti** (rama `main`) |
-| Proyecto Supabase | `estudio-casoratti` · ref `hebooqzvbnwuabujkbff` · `https://hebooqzvbnwuabujkbff.supabase.co` |
+| Proyecto Supabase | `estudio casoratti` · ref `tdlmritilgtwnxbxkrze` · `https://tdlmritilgtwnxbxkrze.supabase.co` · región us-west-2 |
 
 Cuentas reales creadas (password única: `casoratti2026`):
 
 | Email | Rol |
 |---|---|
-| `admin@estudiocasoratti.com.ar` | **administrador** |
+| `casorattiestudiojuridico@gmail.com` | **administrador** (es el correo de contacto del estudio) |
 | `abogado@estudiocasoratti.com.ar` | abogado |
 | `cliente@ejemplo.com` | cliente |
 | `carlos@ejemplo.com` | cliente |
 | `registrado@ejemplo.com` | usuario registrado |
 
-> **Pendiente:** la Edge Function `submit-consultation` todavía no está desplegada en el
-> proyecto real (requiere un *access token* de cuenta Supabase con alcance
-> `edge_functions_write` y los secretos `SITE_ORIGIN` y `RATE_LIMIT_SALT`). Hasta que se
-> despliegue, el formulario de contacto del sitio no puede guardar consultas.
+> **Edge Function `submit-consultation`: desplegada y verificada** en el proyecto real, con
+> los secretos `SITE_ORIGIN` y `RATE_LIMIT_SALT`. El alta pública de consultas está
+> protegida en el servidor: **máximo 5 consultas por IP cada 24 horas**, con ventana
+> móvil (la capacidad se libera de a una cuando la consulta más antigua sale de la
+> ventana). El límite se aplica dentro de una transacción en PostgreSQL
+> (`public.submit_consultation`), no en el navegador.
 
 ---
 
@@ -53,6 +55,11 @@ administración. **El sitio público no cambió**: es aditivo.
   el alta de consultas públicas pasa por una Edge Function (validación + rate limiting).
 - **Rutas privadas**: `/ingresar`, `/registro`, `/mi-cuenta` (área de cliente) y
   `/panel/*` (sólo administrador).
+- **Administración de consultas** (`/panel/consultas`): listado paginado en el servidor
+  (10 filas por página), buscador y filtros (área, estado, fechas, IP, sólo nuevas),
+  KPIs, serie diaria de 30 días, distribución por estado, detalle con notas internas,
+  mensajes con el cliente, historial administrativo, vinculación a cliente / expediente /
+  abogado y control de solicitudes por IP.
 
 ### Puesta en marcha
 

@@ -197,7 +197,7 @@ Rutas bajo `/panel`, con marco propio (sidebar + topbar) y carga diferida del ch
 | `/panel` | **Dashboard** | 8 KPIs (consultas totales, nuevas, abiertas, clientes, clientes activos, expedientes abiertos, usuarios, notificaciones sin leer) + consultas recientes + actividad reciente |
 | `/panel/usuarios` | **Usuarios** | Listado con nombre, **email**, identificador, rol y ficha de cliente vinculada; búsqueda por nombre y email; cambio de rol (con bloqueo del propio) |
 | `/panel/clientes` | **Clientes** | Alta/edición (nombre, documento, email, teléfono, domicilio, estado, abogado, notas internas), filtro por texto y estado, vinculación de cuenta registrada, conteos de consultas y expedientes |
-| `/panel/consultas` | **Consultas** | Filtros por nombre, email, área, estado, rango de fechas y "sólo nuevas"; ficha completa en panel lateral: cambio de estado, asignación de abogado, vinculación/creación de cliente, vinculación a expediente, **notas internas** y **mensajes al cliente** |
+| `/panel/consultas` | **Administración de consultas** | KPIs (totales, nuevas, recibidas hoy, últimos 7 y 30 días, en análisis, tasa de respuesta, IPs distintas en 24 h), serie diaria de 30 días, distribución por estado, **listado paginado en el servidor (10 por página)**, buscador (nombre, email, asunto o código) y filtros (área, estado, desde/hasta, IP, sólo nuevas), **control de solicitudes por IP** con el límite 5/24 h, ficha lateral con IP y navegador, cambio de estado, asignación de abogado, vinculación a cliente/expediente, conversión de consulta en cliente, **notas internas**, **mensajes al cliente** e **historial administrativo** |
 | `/panel/expedientes` | **Expedientes** | Listado y filtros, alta/edición completa (número, carátula, cliente, abogado, fuero, jurisdicción, juzgado, estado), documentos asociados y vínculo con la consulta origen |
 | `/panel/documentacion` | **Documentación** | Subida a buckets privados con validación (pdf/docx/imágenes, 25 MB), paths `{owner_id}/{archivo}`, descarga por **URL firmada de 60 s**, borrado de archivo + metadato |
 | `/panel/auditoria` | **Auditoría** | Registro de operaciones con filtro por tipo de entidad y rango de fechas, paginado, **sólo lectura** |
@@ -229,17 +229,18 @@ contra el panel y contra la API real:
 
 | # | Paso | Estado |
 |---|---|---|
-| 1 | Proyecto creado | ✅ `estudio-casoratti` · ref `hebooqzvbnwuabujkbff` · org "Estudio Casoratti" · plan Free |
-| 2 | 7 migraciones aplicadas | ✅ `supabase db push --db-url …` → **7/7 aplicadas** |
+| 1 | Proyecto creado | ✅ `estudio casoratti` · ref `tdlmritilgtwnxbxkrze` · org "Estudio Casoratti" · plan Free · región us-west-2 |
+| 2 | Migraciones aplicadas | ✅ 10 migraciones aplicadas desde el editor SQL del panel: `20260114000100` … `20260115000300` |
 | 3 | Provider de email + confirmación | ✅ activo |
 | 4 | Google OAuth | ⛔ **no configurado** (ver 12.1) |
 | 5 | URLs de redirección permitidas | ✅ `/mi-cuenta`, `/ingresar` y la URL pública de Vercel |
 | 6 | Buckets privados | ✅ `client-documents` y `case-documents` (creados por la migración 00400) |
-| 7 | Edge Function `submit-consultation` | ⛔ **no desplegada** (ver 12.1) |
-| 8 | Secretos `RATE_LIMIT_SALT` / `SITE_ORIGIN` | ⛔ pendientes de configurar (van junto con el paso 7) |
-| 9 | `.env` del sitio con URL y clave pública | ✅ |
+| 7 | Edge Function `submit-consultation` | ✅ **desplegada y verificada** (alta real contra la API, CORS acotado al origen de producción) |
+| 8 | Secretos `RATE_LIMIT_SALT` / `SITE_ORIGIN` | ✅ configurados en el proyecto |
+| 9 | `.env` del sitio con URL y clave pública | ✅ apuntando al proyecto `tdlmritilgtwnxbxkrze` |
 | 10 | Primer rol `admin` | ✅ otorgado por SQL directo (ver 10.7) |
 | 11 | `npm test` contra la API real | ✅ RLS verificado contra la API de producción |
+| 12 | Límite de consultas por IP | ✅ **5 por IP cada 24 h**, aplicado en PostgreSQL (`public.submit_consultation`, `SECURITY DEFINER` + `pg_advisory_xact_lock`) |
 
 El paso a paso genérico está en **`docs/SUPABASE_SETUP.md`**.
 
@@ -285,11 +286,12 @@ comportamiento de Supabase. Un mock no probaría nada de esto.
    afecta 0 filas**. Las aserciones se reescribieron para verificar el efecto real
    (el dato no cambia) en lugar de esperar una excepción.
 
-### 10.2 Resto de la suite — 47/47 ✅
+### 10.2 Resto de la suite — 76/76 ✅
 
 | Archivo | Tests | Qué cubre |
 |---|---|---|
 | `supabase/tests/rls.test.ts` | 34 | políticas RLS sobre Postgres real |
+| `client/src/pages/admin/consultations-utils.test.ts` | 29 | lógica pura del panel de consultas: paginación de 10 filas, filtros combinables, resumen de KPIs, distribución por estado, uso por IP, degradación cuando falta la columna `ip_address` |
 | `client/src/lib/rbac.test.ts` | 7 | coherencia entre enums de la base y etiquetas de la UI; guards de rol |
 | `server/auth.logout.test.ts` | 5 | cierre de sesión (preexistente) |
 | `server/platform.test.ts` | 6 | plataforma Manus (preexistente) |
@@ -382,21 +384,45 @@ selector de gestión.
 
 ### 10.9 Lo que NO se pudo verificar (y por qué)
 
-1. **El envío del formulario de contacto en producción no se pudo probar de punta a
-   punta** porque la Edge Function `submit-consultation` **no está desplegada**: el
-   deploy vía CLI exige un *access token* de cuenta Supabase con alcance
-   `edge_functions_write`, que no se pudo emitir desde el entorno automatizado. El
-   frontend, la función (código completo y testeado) y la DB están listos; falta
-   únicamente el paso de deploy y definir los secretos `SITE_ORIGIN` y
-   `RATE_LIMIT_SALT`.
-2. **Google OAuth** no está configurado en el proyecto: el botón lleva al `authorize`
+1. **Google OAuth** no está configurado en el proyecto: el botón lleva al `authorize`
    real de Google y falla. El login por correo — que es el método de las 5 cuentas
    reales — funciona correctamente.
-3. **La descarga real de un archivo con URL firmada** no se probó en producción: no
+2. **La descarga real de un archivo con URL firmada** no se probó en producción: no
    hay documentos cargados en los buckets. La policy de Storage está cubierta por la
    suite RLS (prueba 10 de 10.1) y por la verificación de permisos.
-4. El **correo de las notificaciones** no está implementado (queda el punto de
+3. El **correo de las notificaciones** no está implementado (queda el punto de
    extensión documentado en 12.2).
+
+### 10.10 Verificación del panel de consultas contra el proyecto real — ✅
+
+Todo lo que sigue se ejecutó contra el proyecto `tdlmritilgtwnxbxkrze`, no contra un
+mock:
+
+| Prueba | Resultado |
+|---|---|
+| Login del administrador (`casorattiestudiojuridico@gmail.com`) contra la API real | ✅ sesión con rol `admin` |
+| Alta por la Edge Function con el `Origin` de producción | ✅ `200` · `Access-Control-Allow-Origin: https://estudio-casoratti.vercel.app` · `CONS-261125-F5BE78` |
+| Límite por IP: 7 envíos desde la misma IP | ✅ 5 con `200` y las consultas 6 y 7 con `429` + `retryAfterSeconds: 86398` |
+| IP guardada en la fila | ✅ `ip_address = 190.183.17.108`, `user_agent` presente |
+| Código de referencia generado en la base | ✅ `CONS-261125-C92856` (default `CONS-YYMMDD-XXXXXX`) |
+| KPIs y serie diaria (`admin_consultation_stats(30)`) | ✅ `total 32`, `nuevas 9`, `hoy 6`, `ips_24h 2`, serie de 30 días |
+| Paginación real (10 por página) | ✅ `Content-Range: 0-9/32`, `10-19/32`, `20-29/32` |
+| Filtro por texto | ✅ "María Gómez" → `Mostrando 1–2 de 2 consultas` |
+| Filtro por IP | ✅ `203.0.113.20` → `Mostrando 1–9 de 9 consultas` |
+| Panel en el navegador | ✅ KPIs, serie, distribución por estado, listado, ficha lateral, notas, mensajes e historial |
+| Nota interna guardada desde el panel | ✅ `Nota interna guardada.` con autor y hora |
+| RLS: un cliente no ve consultas ajenas | ✅ 0 filas para `cliente@ejemplo.com` |
+| RLS: `anon` no puede leer consultas | ✅ `401` `permission denied for table legal_consultations` |
+| Limpieza final | ✅ 0 consultas, 0 notas, 0 notificaciones de prueba en la base |
+
+Tres defectos reales aparecieron durante esta verificación y quedaron corregidos en el
+repositorio (ver commit `02d2eeb`):
+
+| Defecto | Causa | Corrección |
+|---|---|---|
+| La Edge Function devolvía `500` en toda alta | `time zone "America/Argentina" not recognized`: ese nombre no existe en el tzdata de Postgres | `America/Argentina/Buenos_Aires` en el default de `reference_code` y en las estadísticas |
+| La API devolvía `42501` en cualquier lectura | Las tablas se crearon sin `GRANT`: los roles de la API sólo quedaban con `REFERENCES, TRIGGER, TRUNCATE` | Migración `20260115000300_privilegios.sql`: `anon` lee sólo el catálogo de áreas, `authenticated` opera con RLS, `service_role` escribe |
+| El catálogo tenía 15 áreas y una con texto corrupto | El slug `danos-y-seguiros` convivía con `danos-y-seguros`; además el SQL se había pegado con la codificación equivocada | Slug unificado en `danos-y-seguros` (el que usa el sitio) y borrado de la fila duplicada; todo el texto re-aplicado en UTF-8 |
 
 ## 11. Archivos agregados
 
@@ -411,7 +437,13 @@ supabase/
     20260114000500_seed.sql                12 áreas jurídicas
     20260114000600_rate_limit.sql          RPC de rate limiting
     20260114000700_profiles_email.sql      email en el perfil + backfill
-  functions/submit-consultation/index.ts   Edge Function (validación + rate limit)
+    20260115000100_areas_actualizadas.sql  catálogo real de 14 áreas
+    20260115000200_panel_consultas.sql     ip_address, código de referencia, RPC de
+                                           alta atómica con límite por IP, KPIs
+    20260115000300_privilegios.sql         GRANT de los roles de la API
+  functions/submit-consultation/
+    index.ts                               Edge Function (Deno): IP real, CORS, RPC
+    handler.ts                             validación y reglas puras (Deno + Node)
   tests/harness.ts                         harness PGlite (shims auth/storage)
   tests/rls.test.ts                        34 pruebas de seguridad
 
@@ -422,8 +454,12 @@ client/src/
   contexts/AuthContext.tsx                 sesión, perfil y rol
   pages/auth/AuthPages.tsx                 ingreso, registro, recuperación
   pages/account/AccountArea.tsx            área de cliente
-  pages/admin/                             AdminShell + 8 módulos
+  pages/admin/AdminShell.tsx               marco del panel + rutas
+  pages/admin/ConsultationsAdminModule.tsx administración de consultas
+  pages/admin/consultations-utils.ts       paginación, filtros, KPIs, uso por IP
+  pages/admin/consultations-utils.test.ts  29 pruebas de la lógica del panel
   styles/admin.css                         sistema visual del panel
+  styles/admin-consultations.css           estilos propios del módulo de consultas
 
 docs/
   ARCHITECTURE.md                          decisiones y alternativas descartadas
@@ -442,34 +478,33 @@ client/public/_redirects                   fallback SPA (Netlify/Cloudflare)
 
 ## 12. Limitaciones conocidas
 
-1. **La Edge Function `submit-consultation` no está desplegada** en el proyecto real.
-   El código está completo, combinado en un solo archivo (`supabase/functions/submit-consultation/`
-   con `handler.ts` puro + `index.ts`), pero el deploy requiere un *access token* de
-   cuenta Supabase con alcance `edge_functions_write`. Mientras tanto, el formulario de
-   contacto del sitio público no puede guardar consultas.
-2. **Google OAuth no está configurado.** El botón "Continuar con Google" lleva al
+1. **Google OAuth no está configurado.** El botón "Continuar con Google" lleva al
    `authorize` real de Google y falla. El login por correo (el método de las 5 cuentas
    reales) funciona.
-3. El **correo de las notificaciones** no está implementado: las notificaciones se
+2. El **correo de las notificaciones** no está implementado: las notificaciones se
    guardan en la tabla y se ven en la plataforma. El prompt lo planteaba como
    "se podrá incorporar", así que queda el punto de extensión (`supabase/functions/`
    con un proveedor como Resend, configurado desde variables de entorno).
-4. El **formulario no adjunta archivos**: la carga de documentos es desde el panel.
-5. La **recuperación de clave** depende de que el proveedor de email esté configurado
+3. El **formulario no adjunta archivos**: la carga de documentos es desde el panel.
+4. La **recuperación de clave** depende de que el proveedor de email esté configurado
    en Supabase.
-6. El **área de abogado** no tiene escritorio propio (se priorizó el panel y el área
+5. El **área de abogado** no tiene escritorio propio (se priorizó el panel y el área
    de cliente, según lo definido); el abogado opera sobre los clientes y
    expedientes que tiene asignados desde el panel.
+6. El **límite por IP** es por dirección, no por persona: varias personas detrás del
+   mismo NAT comparten cuota, y una persona que cambia de IP puede volver a escribir.
+   Es el criterio pedido y evita eltrackers que un límite por cookie rompería.
 
 ## 13. Despliegue en producción
 
 | Pieza | Identificador | Estado |
 |---|---|---|
-| Repositorio | `https://github.com/manusrovira/estudio-casoratti` (rama `main`) | ✅ 3 commits |
+| Repositorio | `https://github.com/manusrovira/estudio-casoratti` (rama `main`) | ✅ commits `84609ff` → `02d2eeb` |
 | Sitio público | `https://estudio-casoratti.vercel.app` | ✅ |
-| Proyecto Vercel | `cimiaproyect/estudio-casoratti` (plan Hobby) | ✅ 3 deployments "Ready" |
-| Proyecto Supabase | `estudio-casoratti` · ref `hebooqzvbnwuabujkbff` | ✅ Healthy |
-| Variables en Vercel | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | ✅ (sólo las dos públicas) |
+| Proyecto Vercel | `cimiaproyect/estudio-casoratti` (plan Hobby) | ✅ deployments "Ready" (integración con GitHub: cada push a `main` despliega) |
+| Proyecto Supabase | `estudio casoratti` · ref `tdlmritilgtwnxbxkrze` · org "Estudio Casoratti" | ✅ Healthy · región us-west-2 |
+| Edge Function | `submit-consultation` | ✅ desplegada, con secretos `SITE_ORIGIN` y `RATE_LIMIT_SALT` |
+| Variables en Vercel | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | ✅ (sólo las dos públicas, tipo Config) |
 
 **Configuración de build en Vercel** (`vercel.json`):
 
@@ -489,7 +524,7 @@ tiene que servir `index.html` con un 200 directo (verificado).
 
 | Email | Rol | Ficha vinculada |
 |---|---|---|
-| `admin@estudiocasoratti.com.ar` | **admin** | — |
+| `casorattiestudiojuridico@gmail.com` | **admin** | — |
 | `abogado@estudiocasoratti.com.ar` | abogado | Dr. Julián Casoratti (MP-4451) |
 | `cliente@ejemplo.com` | cliente | Ana Gómez |
 | `carlos@ejemplo.com` | cliente | Carlos Duarte |
