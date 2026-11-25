@@ -27,7 +27,7 @@ create index if not exists legal_consultations_status_received_idx
 -- insertar una consulta sin código (la función lo pedía y no existía default).
 alter table public.legal_consultations
   alter column reference_code set default (
-    'CONS-' || to_char((now() at time zone 'America/Argentina'), 'YYMMDD') || '-' ||
+    'CONS-' || to_char((now() at time zone 'America/Argentina/Buenos_Aires'), 'YYMMDD') || '-' ||
     upper(substr(md5(gen_random_uuid()::text), 1, 6))
   );
 
@@ -146,7 +146,7 @@ set search_path = public
 as $$
 declare
   v_days integer := greatest(1, least(coalesce(p_days, 30), 365));
-  v_today date := (now() at time zone 'America/Argentina')::date;
+  v_today date := (now() at time zone 'America/Argentina/Buenos_Aires')::date;
   v_result jsonb;
 begin
   if not public.is_admin() then
@@ -160,7 +160,7 @@ begin
     'total', (select count(*) from public.legal_consultations),
     'nuevas', (select count(*) from public.legal_consultations where is_new),
     'hoy', (select count(*) from public.legal_consultations
-             where (received_at at time zone 'America/Argentina')::date = v_today),
+             where (received_at at time zone 'America/Argentina/Buenos_Aires')::date = v_today),
     'ultimos_7', (select count(*) from public.legal_consultations
                     where received_at > now() - interval '7 days'),
     'ultimos_30', (select count(*) from public.legal_consultations
@@ -187,7 +187,7 @@ begin
                  interval '1 day'
                ) as d(dia)
           left join public.legal_consultations lc
-            on (lc.received_at at time zone 'America/Argentina')::date = d.dia::date
+            on (lc.received_at at time zone 'America/Argentina/Buenos_Aires')::date = d.dia::date
          group by d.dia
       ) x
     ),

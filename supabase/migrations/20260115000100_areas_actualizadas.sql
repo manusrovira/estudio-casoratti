@@ -28,7 +28,7 @@ values
    'Divorcios y convenciones, cuota alimentaria, tenencias compartidas, adopciones, tutelas, filiación y violencia familiar.', 10, true),
   ('Sucesiones', 'sucesiones',
    'Sucesiones testamentarias e intestadas, declaratoria de herederos, partición, cesión de derechos y homologación de acuerdos.', 20, true),
-  ('Daños y perjuicios', 'danos-y-seguiros',
+  ('Daños y perjuicios', 'danos-y-seguros',
    'Accidentes de tránsito, mala praxis profesional, incumplimiento contractual, daños estéticos y reclamos a aseguradoras.', 30, true),
   ('Derecho previsional', 'previsional',
    'Jubilaciones y pensiones, reajustes de haberes, amparos y apelaciones, invalidez, reconocimiento de servicios y monotributo.', 40, true),
@@ -57,3 +57,15 @@ on conflict (slug) do update
       description = excluded.description,
       sort_order = excluded.sort_order,
       is_active = excluded.is_active;
+
+-- 3) Una versión anterior de este archivo usó el slug 'danos-y-seguiros' para
+--    "Daños y perjuicios". El sitio público y el catálogo usan 'danos-y-seguros',
+--    así que la fila con el slug mal escrito se retira para que el catálogo
+--    quede con las 14 áreas reales. Sólo se borra si ninguna consulta la
+--    referencia, para no romper el historial.
+delete from public.consultation_categories
+ where slug = 'danos-y-seguiros'
+   and not exists (
+     select 1 from public.legal_consultations c
+      where c.category_id = public.consultation_categories.id
+   );
