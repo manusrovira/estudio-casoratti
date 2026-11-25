@@ -24,15 +24,15 @@ Platform configuration is readable and editable through `webdev.config`. Default
 | Repositorio | **https://github.com/manusrovira/estudio-casoratti** (rama `main`) |
 | Proyecto Supabase | `estudio casoratti` · ref `tdlmritilgtwnxbxkrze` · `https://tdlmritilgtwnxbxkrze.supabase.co` · región us-west-2 |
 
-Cuentas reales creadas (password única: `casoratti2026`):
+Cuentas reales creadas (password única inicial: `casoratti2026`):
 
-| Email | Rol |
-|---|---|
-| `casorattiestudiojuridico@gmail.com` | **administrador** (es el correo de contacto del estudio) |
-| `abogado@estudiocasoratti.com.ar` | abogado |
-| `cliente@ejemplo.com` | cliente |
-| `carlos@ejemplo.com` | cliente |
-| `registrado@ejemplo.com` | usuario registrado |
+| Email | Rol | Password |
+|---|---|---|
+| `casorattiestudiojuridico@gmail.com` | **administrador** (es el correo de contacto del estudio) | `DraCasoratti2026.` (cambiada desde el propio panel) |
+| `abogado@estudiocasoratti.com.ar` | abogado | `casoratti2026` |
+| `cliente@ejemplo.com` | cliente | `casoratti2026` |
+| `carlos@ejemplo.com` | cliente | `casoratti2026` |
+| `registrado@ejemplo.com` | usuario registrado | `casoratti2026` |
 
 > **Edge Function `submit-consultation`: desplegada y verificada** en el proyecto real, con
 > los secretos `SITE_ORIGIN` y `RATE_LIMIT_SALT`. El alta pública de consultas está
@@ -60,6 +60,44 @@ administración. **El sitio público no cambió**: es aditivo.
   KPIs, serie diaria de 30 días, distribución por estado, detalle con notas internas,
   mensajes con el cliente, historial administrativo, vinculación a cliente / expediente /
   abogado y control de solicitudes por IP.
+
+- **Seguridad** (`/panel/seguridad`): cambio de contraseña del administrador desde el
+  propio panel. Verifica la contraseña actual reautenticando contra Supabase Auth,
+  exige mínimos de seguridad (10 caracteres, minúscula, mayúscula, número y símbolo),
+  rechaza la reutilización de la contraseña actual, cierra las sesiones abiertas en
+  otros dispositivos y deja la operación registrada en la bitácora — **sin** guardar
+  ni registrar jamás la contraseña.
+- **Biblioteca de imágenes** (`/panel/imagenes`): administrador integral de todos los
+  recursos gráficos del sitio. Inventario real generado en el build (8 imágenes del
+  proyecto con ruta física, URL pública, formato, peso, dimensiones, fecha y
+  referencias en el código), carga por arrastre o selección múltiple con vista
+  previa, progreso y cancelación, detección de duplicados que no sobrescribe sin
+  confirmación, editor visual con recorte (libre, 1:1, 16:9, 4:3, 3:4, 9:16),
+  encuadre (marco, radio, borde, `cover`/`contain`/`fill`) y vista previa contextual,
+  reemplazo conservando la copia de la versión original, eliminación con aviso
+  cuando la imagen está en uso, papelera con restauración y borrado definitivo con
+  doble confirmación, y edición de metadatos (ALT, título, descripción, categoría,
+  etiquetas).
+
+### Dónde viven las imágenes administradas
+
+El sitio se despliega en Vercel como **sitio estático**: el sistema de archivos de
+producción es de sólo lectura, así que un asset compilado por Vite no se puede
+sobrescribir desde el panel. Por eso el gestor trabaja sobre el bucket
+`site-media` de Supabase Storage, que es el almacenamiento persistente real:
+
+| Procedencia | Dónde está | Cómo se sirve |
+|---|---|---|
+| Asset compilado | `client/src/assets/` | Vite lo emite con hash (`/assets/hero-zHES6NpP.jpg`) |
+| Imagen cargada | bucket `site-media` (público) | `…/storage/v1/object/public/site-media/<ruta>` |
+| Reemplazo | bucket `site-media`, misma ruta lógica | el sitio lo resuelve con `useMediaSrc` |
+
+El manifiesto (`media-manifest.json`, generado en cada build por un plugin de Vite)
+es el inventario: rutas lógicas, rutas físicas, URL pública real y las referencias
+detectadas en el código. Cuando el administrador reemplaza una imagen del bundle, la
+versión nueva queda en Storage **con la misma ruta lógica**, y el sitio público la
+resuelve solo; si no hay reemplazo, sigue usando el asset compilado y **el diseño no
+cambia nunca**.
 
 ### Puesta en marcha
 

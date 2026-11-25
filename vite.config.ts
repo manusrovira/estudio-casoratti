@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 import fs from "node:fs";
 import path from "node:path";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
+import { mediaManifestPlugin } from "./client/src/lib/mediaManifestPlugin";
 import { publicPlatformScript } from "./server/_core/publicConfig";
 
 // =============================================================================
@@ -186,7 +187,7 @@ function vitePluginSpaFallback(): Plugin {
   };
 }
 
-const plugins = [vitePluginPublicPlatformConfig(), react(), tailwindcss(), jsxLocPlugin(), vitePluginManusDebugCollector(), vitePluginSpaFallback()];
+const plugins = [vitePluginPublicPlatformConfig(), react(), tailwindcss(), jsxLocPlugin(), vitePluginManusDebugCollector(), vitePluginSpaFallback(), mediaManifestPlugin()];
 export default defineConfig({
   plugins,
   resolve: {

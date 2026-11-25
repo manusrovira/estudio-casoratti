@@ -1,0 +1,156 @@
+/* =============================================================================
+   Módulo de administración «Seguridad · Cambiar contraseña».
+
+   Estilos propios del módulo. Se apoyan en las clases ya existentes del panel
+   (admin-card, admin-input, admin-button…) y sólo agregan lo que el módulo
+   necesita: el indicador de fortaleza y la lista de requisitos.
+
+   Paleta: tinta verde oscuro, papel marfil, cobre y dorado. Sin sombras
+   pesadas, sin degradados y sin esquinas redondeadas en todo.
+   ============================================================================= */
+
+/* --- Formulario -------------------------------------------------------------- */
+.admin-sec-form {
+  gap: 1.1rem;
+  max-width: 560px;
+}
+
+/* --- Errores de validación --------------------------------------------------- */
+.admin-sec-errors {
+  list-style: none;
+  margin: .55rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .3rem;
+}
+
+.admin-sec-errors li {
+  position: relative;
+  padding-left: 1rem;
+  font-size: .78rem;
+  line-height: 1.4;
+}
+
+.admin-sec-errors li::before {
+  content: "—";
+  position: absolute;
+  left: 0;
+  color: var(--copper);
+}
+
+/* --- Textos de apoyo --------------------------------------------------------- */
+.admin-sec-hint {
+  color: var(--muted);
+  font-size: .72rem;
+  line-height: 1.45;
+}
+
+/* --- Indicador de fortaleza -------------------------------------------------- */
+.admin-sec-strength {
+  border: 1px solid var(--line);
+  background: #fcfbf8;
+  padding: .85rem 1rem;
+}
+
+.admin-sec-strength-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: .55rem;
+}
+
+.admin-sec-strength-label {
+  color: var(--muted);
+  font-size: .6rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.admin-sec-strength-value {
+  font: 1.05rem/1 Georgia, serif;
+}
+
+.admin-sec-strength-value.is-debil { color: #9d3b2e; }
+.admin-sec-strength-value.is-media { color: #8a6a25; }
+.admin-sec-strength-value.is-fuerte { color: #2f6049; }
+.admin-sec-strength-value.is-muy-fuerte { color: var(--gold-deep); }
+
+/* Medidor de cuatro segmentos: el color acompaña al texto, no lo reemplaza. */
+.admin-sec-meter {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.admin-sec-meter-step {
+  height: 6px;
+  background: var(--mist);
+  border: 1px solid var(--line);
+}
+
+.admin-sec-meter-step.is-on.is-debil { background: #9d3b2e; }
+.admin-sec-meter-step.is-on.is-media { background: #b08a3e; }
+.admin-sec-meter-step.is-on.is-fuerte { background: #3f7a5c; }
+.admin-sec-meter-step.is-on.is-muy-fuerte { background: var(--gold-deep); }
+
+/* --- Lista de requisitos ----------------------------------------------------- */
+.admin-sec-requirements {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: .4rem 1rem;
+}
+
+.admin-sec-requirement {
+  display: flex;
+  align-items: baseline;
+  gap: .45rem;
+  font-size: .76rem;
+  color: var(--muted);
+}
+
+.admin-sec-requirement.is-met { color: #2f6049; }
+
+.admin-sec-mark {
+  flex: none;
+  width: .9rem;
+  font-weight: 600;
+}
+
+.admin-sec-requirement:not(.is-met) .admin-sec-mark { color: var(--mist); }
+
+/* Estado explícito de cada requisito: "cumple" o "falta". Antes el estado
+   sólo se leía en un texto para lectores de pantalla, así que un requisito
+   pendiente se confundía con un separador. */
+.admin-sec-requirement-state {
+  margin-left: auto;
+  font-size: .68rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--mist);
+}
+
+.admin-sec-requirement.is-met .admin-sec-requirement-state { color: #2f6049; }
+
+/* --- Utilidades -------------------------------------------------------------- */
+.admin-sec-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- Pantallas chicas -------------------------------------------------------- */
+@media (max-width: 620px) {
+  .admin-sec-form { max-width: none; }
+  .admin-sec-requirements { grid-template-columns: 1fr; }
+}

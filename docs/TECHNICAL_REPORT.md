@@ -195,6 +195,8 @@ Rutas bajo `/panel`, con marco propio (sidebar + topbar) y carga diferida del ch
 | Ruta | Módulo | Funcionalidad |
 |---|---|---|
 | `/panel` | **Dashboard** | 8 KPIs (consultas totales, nuevas, abiertas, clientes, clientes activos, expedientes abiertos, usuarios, notificaciones sin leer) + consultas recientes + actividad reciente |
+| `/panel/seguridad` | **Seguridad** | Cambio de contraseña del administrador: verificación de la contraseña actual por reautenticación, mínimos de seguridad (10 caracteres, minúscula, mayúscula, número, símbolo), rechazo de la reutilización, medidor de fortaleza, cierre de las sesiones abiertas en otros dispositivos y registro en la bitácora (sin datos de la contraseña) |
+| `/panel/imagenes` | **Biblioteca de imágenes** | Inventario real (8 imágenes del proyecto + las cargadas en Storage), KPIs, buscador, filtros por formato / ubicación / estado, vista cuadrícula o lista, detalle con rutas (física, pública, nombre original, nombre almacenado, directorio, URL pública, proveedor) y referencias, **carga** por arrastre o selección múltiple con vista previa, progreso, cancelación, validación de contenido real y detección de duplicados, **editor** con recorte / ajuste / encuadre y vista previa contextual, reemplazo con copia de seguridad, eliminación con aviso cuando está en uso, **papelera** con restauración y borrado definitivo con doble confirmación, metadatos (ALT, título, descripción, categoría, etiquetas) y registro de actividad |
 | `/panel/usuarios` | **Usuarios** | Listado con nombre, **email**, identificador, rol y ficha de cliente vinculada; búsqueda por nombre y email; cambio de rol (con bloqueo del propio) |
 | `/panel/clientes` | **Clientes** | Alta/edición (nombre, documento, email, teléfono, domicilio, estado, abogado, notas internas), filtro por texto y estado, vinculación de cuenta registrada, conteos de consultas y expedientes |
 | `/panel/consultas` | **Administración de consultas** | KPIs (totales, nuevas, recibidas hoy, últimos 7 y 30 días, en análisis, tasa de respuesta, IPs distintas en 24 h), serie diaria de 30 días, distribución por estado, **listado paginado en el servidor (10 por página)**, buscador (nombre, email, asunto o código) y filtros (área, estado, desde/hasta, IP, sólo nuevas), **control de solicitudes por IP** con el límite 5/24 h, ficha lateral con IP y navegador, cambio de estado, asignación de abogado, vinculación a cliente/expediente, conversión de consulta en cliente, **notas internas**, **mensajes al cliente** e **historial administrativo** |
@@ -424,6 +426,80 @@ repositorio (ver commit `02d2eeb`):
 | La API devolvía `42501` en cualquier lectura | Las tablas se crearon sin `GRANT`: los roles de la API sólo quedaban con `REFERENCES, TRIGGER, TRUNCATE` | Migración `20260115000300_privilegios.sql`: `anon` lee sólo el catálogo de áreas, `authenticated` opera con RLS, `service_role` escribe |
 | El catálogo tenía 15 áreas y una con texto corrupto | El slug `danos-y-seguiros` convivía con `danos-y-seguros`; además el SQL se había pegado con la codificación equivocada | Slug unificado en `danos-y-seguros` (el que usa el sitio) y borrado de la fila duplicada; todo el texto re-aplicado en UTF-8 |
 
+### 10.11 Módulos «Seguridad» y «Biblioteca de imágenes» — verificación real ✅
+
+Todo lo que sigue se ejecutó contra el proyecto `tdlmritilgtwnxbxkrze` y contra la
+aplicación real, no contra mocks.
+
+**Base de datos (migración `20260115000400_media_admin.sql`, aplicada en el panel)**
+
+| Comprobación | Resultado |
+|---|---|
+| Bucket `site-media` creado | ✅ público, 10 MB, 5 MIME admitidos |
+| Tablas `site_media`, `media_folders`, `media_activity` | ✅ con RLS activa |
+| Carpetas iniciales | ✅ 7 (`assets`, `overrides` y las 5 de `images/*`) |
+| `anon` lee `site_media` | ✅ bloqueado (401) |
+| Un cliente lee o escribe `site_media` | ✅ bloqueado |
+| `media_activity` es de sólo lectura | ✅ ni el administrador puede modificarla |
+| `log_media_action` con un cliente | ✅ bloqueado: exige `public.is_admin()` |
+| `log_media_action` con una acción inventada | ✅ bloqueado: lista blanca |
+| El `detail` de la bitácora guarda la contraseña | ✅ **nunca**: se descartan las claves de tipo credencial |
+| `resolve_media_overrides` (RPC público) | ✅ expone sólo medios activos |
+
+**Ciclo real de la imagen (36/36 comprobaciones contra la API de producción)**
+
+| Comprobación | Resultado |
+|---|---|
+| Carga de un JPEG real en `site-media` | ✅ `200` |
+| El bucket rechaza un `.txt` con contenido `text/plain` | ✅ |
+| Un cliente intenta escribir en `site-media` | ✅ `403` |
+| La imagen cargada se sirve por URL pública | ✅ y los bytes coinciden con el archivo original |
+| Registro en `site_media` | ✅ con dimensiones, peso y metadatos |
+| La bitácora guarda el autor real de la sesión | ✅ `actor_id` = uid de la sesión, no un parámetro del cliente |
+| El RPC público incluye el medio recién cargado | ✅ |
+| El medio pasa a la papelera | ✅ `status = trashed` |
+| El RPC público **excluye** lo que está en la papelera | ✅ |
+| Borrado definitivo (fila + objeto de Storage) | ✅ y el objeto ya no figura en el bucket |
+| La URL pública deja de servir el objeto | ✅ |
+| Base limpia al final | ✅ 0 medios, 0 filas de bitácora |
+
+**En el navegador (build local, panel con sesión de administrador)**
+
+| Prueba | Resultado |
+|---|---|
+| Inventario con datos reales | ✅ 8 imágenes · 6 utilizadas · 2 sin referencias · 1,3 MB · rutas, formatos, pesos, dimensiones y fechas reales |
+| Manifiesto generado en el build | ✅ `media-manifest.json` con la URL pública real que emite Vite y las referencias con archivo y línea |
+| Creación de carpeta desde el panel | ✅ «Se creó la carpeta «images/prueba-panel»» y aparece en el desplegable de destino |
+| Carga múltiple desde el panel | ✅ «Se subieron 2 imágenes a «images/prueba-panel»» |
+| Detección de duplicados | ✅ «Ya existe «team-room.jpg» en assets» con confirmación expresa antes de sobrescribir |
+| Detalle con rutas y copiado | ✅ ruta del proveedor, ruta física, URL pública, nombre original, nombre almacenado, directorio y «dónde se usa» |
+| Eliminación con confirmación | ✅ «¿Eliminar «prueba-carga-casoratti.jpg»? La imagen va a la papelera y se puede restaurar.» |
+| Restauración desde la papelera | ✅ «Se restauró…» y la papelera queda vacía |
+| Borrado definitivo | ✅ doble confirmación con casilla «Entiendo que esta acción no se puede deshacer» |
+| Registro de actividad | ✅ fecha, acción, imagen, administrador y resultado por operación |
+| Persistencia tras recargar | ✅ el inventario sigue mostrando lo cargado |
+
+**Módulo de Seguridad**
+
+| Prueba | Resultado |
+|---|---|
+| Contraseña actual verificada por reautenticación | ✅ contra Supabase Auth |
+| Contraseña nueva establecida | ✅ `updateUser` |
+| Sesiones anteriores revocadas | ✅ `signOut({ scope: "others" })` → `204` |
+| Ingreso con la contraseña nueva | ✅ `200` |
+| Ingreso con la contraseña anterior | ✅ `400` (rechazada) |
+| La operación queda registrada | ✅ `password_change`, sin datos de la contraseña |
+
+**Dos defectos reales encontrados y corregidos**
+
+| Defecto | Causa | Corrección |
+|---|---|---|
+| «Actualizar contraseña» no respondía y el motivo no se veía | El mensaje de validación se renderizaba **arriba** del formulario, fuera de la vista al pulsar el botón; y el estado de cada requisito («cumple» / «falta») sólo existía en un texto para lectores de pantalla, así que un requisito pendiente se confundía con un separador | El bloque de errores se mueve **justo encima del botón** (con `role="alert"`) y cada requisito muestra su estado en texto visible |
+| `log_media_action` acepta cualquier usuario autenticado | El RPC sólo exigía la lista blanca de acciones, no el rol | `if not public.is_admin() then raise exception …` (42501), aplicado también en la base desplegada |
+
+La suite completa quedó en **231 pruebas en verde sobre 11 archivos**, `tsc --noEmit`
+sin errores y el build estático sin errores.
+
 ## 11. Archivos agregados
 
 ```
@@ -441,16 +517,25 @@ supabase/
     20260115000200_panel_consultas.sql     ip_address, código de referencia, RPC de
                                            alta atómica con límite por IP, KPIs
     20260115000300_privilegios.sql         GRANT de los roles de la API
+    20260115000400_media_admin.sql          bucket site-media, site_media, media_folders,
+                                           media_activity, RPC de bitácora y de overrides
   functions/submit-consultation/
     index.ts                               Edge Function (Deno): IP real, CORS, RPC
     handler.ts                             validación y reglas puras (Deno + Node)
   tests/harness.ts                         harness PGlite (shims auth/storage)
   tests/rls.test.ts                        34 pruebas de seguridad
+  tests/media-rls.test.ts                  31 pruebas de seguridad de medios
 
 client/src/
   lib/supabase.ts                          cliente + constantes
   lib/rbac.ts                              tipos, roles, etiquetas
   lib/rbac.test.ts                         7 pruebas unitarias
+  lib/mediaManifest.ts                     tipos del inventario (seguro para el navegador)
+  lib/mediaManifest.server.ts              escáner real del repositorio + dimensiones
+  lib/mediaManifest.server.test.ts         21 pruebas del escáner
+  lib/mediaManifestPlugin.ts               plugin de Vite que emite media-manifest.json
+  lib/mediaAssets.ts                       asset compilado ↔ ruta lógica estable
+  lib/mediaResolver.ts                     resolución de reemplazos en el sitio público
   contexts/AuthContext.tsx                 sesión, perfil y rol
   pages/auth/AuthPages.tsx                 ingreso, registro, recuperación
   pages/account/AccountArea.tsx            área de cliente
@@ -458,12 +543,30 @@ client/src/
   pages/admin/ConsultationsAdminModule.tsx administración de consultas
   pages/admin/consultations-utils.ts       paginación, filtros, KPIs, uso por IP
   pages/admin/consultations-utils.test.ts  29 pruebas de la lógica del panel
+  pages/admin/SecurityModule.tsx           seguridad y cambio de contraseña
+  pages/admin/security-utils.ts            fortaleza, requisitos y validación
+  pages/admin/security-utils.test.ts       20 pruebas de la lógica de contraseñas
+  pages/admin/images/ImageLibraryModule.tsx   biblioteca de imágenes (interfaz)
+  pages/admin/images/ImageEditorModal.tsx      editor: recorte, ajuste y encuadre
+  pages/admin/images/MediaUploadPanel.tsx      carga con progreso y cancelación
+  pages/admin/images/MediaTrashPanel.tsx       papelera
+  pages/admin/images/MediaMetadataDialog.tsx   metadatos y ALT
+  pages/admin/images/MediaActivityPanel.tsx    registro de actividad
+  pages/admin/images/media-service.ts          servicios contra Storage y Postgres
+  pages/admin/images/media-validator.ts        validación MIME, magic bytes y SVG
+  pages/admin/images/media-editor.ts           matemática del editor
+  pages/admin/images/media-inventory.ts         fusión y filtros del inventario
+  pages/admin/images/*.test.ts                 52 + 31 pruebas de la lógica de medios
+  components/MediaImg.tsx                  imagen del sitio que resuelve reemplazos
   styles/admin.css                         sistema visual del panel
   styles/admin-consultations.css           estilos propios del módulo de consultas
+  styles/admin-security.css                estilos propios del módulo de seguridad
+  styles/admin-images.css                  estilos propios de la biblioteca de imágenes
 
 docs/
   ARCHITECTURE.md                          decisiones y alternativas descartadas
   SUPABASE_SETUP.md                        guía de instalación paso a paso
+  SPEC_MODULOS_ADMIN.md                    especificación de los dos módulos nuevos
   TECHNICAL_REPORT.md                      este informe
 
 .env.example                               variables de entorno
@@ -471,10 +574,12 @@ client/public/_redirects                   fallback SPA (Netlify/Cloudflare)
 ```
 
 **Archivos modificados:** `client/src/App.tsx`, `client/src/components/SiteShell.tsx`,
-`client/src/pages/SitePages.tsx` (sólo el componente `Contact`), `client/src/index.css`
-(2 reglas de estilo para el acceso), `client/src/lib/rbac.ts`, `vite.config.ts`
-(plugin de fallback SPA), `vitest.config.ts`, `tsconfig.json`,
-`client/public/manus-routes.json`.
+`client/src/pages/SitePages.tsx` (sólo el componente `Contact` y las 5 imágenes del
+sitio, que ahora pasan por `MediaImg`), `client/src/index.css` (2 reglas de estilo
+para el acceso), `client/src/lib/rbac.ts`, `vite.config.ts` (plugin de fallback SPA
+y el del manifiesto), `vitest.config.ts`, `tsconfig.json`,
+`client/public/manus-routes.json`, `client/src/pages/admin/AdminShell.tsx`
+(registro de los dos módulos nuevos en la navegación).
 
 ## 12. Limitaciones conocidas
 
@@ -494,6 +599,23 @@ client/public/_redirects                   fallback SPA (Netlify/Cloudflare)
 6. El **límite por IP** es por dirección, no por persona: varias personas detrás del
    mismo NAT comparten cuota, y una persona que cambia de IP puede volver a escribir.
    Es el criterio pedido y evita eltrackers que un límite por cookie rompería.
+7. **Un asset compilado por Vite no se puede sobrescribir en producción**: el despliegue
+   en Vercel es un sitio estático y su sistema de archivos es de sólo lectura. Por eso
+   un reemplazo se guarda en el bucket `site-media` con la **misma ruta lógica** y el
+   sitio lo resuelve en tiempo de ejecución (`useMediaSrc`); si no hay reemplazo, el
+   sitio sigue usando el asset compilado. Un asset protegido (`assets/`, `backups/`)
+   no se elimina desde el panel: se reemplaza.
+8. **La carga desde el panel no muestra progreso por byte**: `uploadImage` no expone
+   un callback de progreso, así que la barra es determinista a nivel de lote y la
+   cancelación aborta la cola pendiente.
+9. **No hay comprobación de contraseñas comprometidas** contra listas de filtraciones:
+   no hay un proveedor de ese tipo en la infraestructura. Lo que sí se comprueba es la
+   reutilización de la contraseña actual y los mínimos de seguridad.
+10. El **hash de las contraseñas** lo produce la infraestructura existente (Supabase
+   Auth / GoTrue), no el código del proyecto: no se implementa hashing propio y jamás
+   se guarda una contraseña en claro.
+11. `scales.webp` y `team-room.jpg` no los referencia ningún archivo del sitio, así
+    que Vite no los emite: aparecen en el inventario sin URL pública ni vista previa.
 
 ## 13. Despliegue en producción
 

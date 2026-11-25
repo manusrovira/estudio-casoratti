@@ -12,6 +12,8 @@ import { AccountArea } from "./pages/account/AccountArea";
 import NotFound from "./pages/NotFound";
 import "./styles/admin.css";
 import "./styles/admin-consultations.css";
+import "./styles/admin-security.css";
+import "./styles/admin-images.css";
 
 // El panel de administración se carga sólo cuando hace falta: son 8 módulos
 // que ningún visitante del sitio público necesita.

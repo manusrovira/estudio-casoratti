@@ -2,10 +2,12 @@ import {
   Briefcase,
   FileText,
   FolderOpen,
+  Images,
   LayoutDashboard,
   MessageSquare,
   ScrollText,
   Settings,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 import { Link, Route, Switch, useLocation } from "wouter";
@@ -17,6 +19,8 @@ import { ClientsModule } from "./ClientsModule";
 import { ConsultationsAdminModule } from "./ConsultationsAdminModule";
 import { DashboardModule } from "./DashboardModule";
 import { DocumentsModule } from "./DocumentsModule";
+import { ImageLibraryModule } from "./images/ImageLibraryModule";
+import { SecurityModule } from "./SecurityModule";
 import { SettingsModule } from "./SettingsModule";
 import { UsersModule } from "./UsersModule";
 
@@ -30,6 +34,8 @@ import { UsersModule } from "./UsersModule";
 
 const navItems = [
   { href: "/panel", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/panel/seguridad", label: "Seguridad", icon: ShieldCheck },
+  { href: "/panel/imagenes", label: "Imágenes", icon: Images },
   { href: "/panel/usuarios", label: "Usuarios", icon: Users },
   { href: "/panel/clientes", label: "Clientes", icon: Briefcase },
   { href: "/panel/consultas", label: "Consultas", icon: MessageSquare },
@@ -43,6 +49,16 @@ const pageMeta: Record<string, { title: string; subtitle: string }> = {
   "/panel": {
     title: "Dashboard",
     subtitle: "Resumen general del funcionamiento del estudio.",
+  },
+  "/panel/seguridad": {
+    title: "Seguridad",
+    subtitle:
+      "Cambio de contraseña del administrador y control de acceso a la cuenta.",
+  },
+  "/panel/imagenes": {
+    title: "Biblioteca de imágenes",
+    subtitle:
+      "Inventario completo de las imágenes del sitio: ubicación, referencias, carga, edición y eliminación.",
   },
   "/panel/usuarios": {
     title: "Usuarios",
@@ -204,6 +220,8 @@ export default function AdminShell() {
         <div className="admin-content">
           <Switch>
             <Route path="/panel" component={DashboardModule} />
+            <Route path="/panel/seguridad" component={SecurityModule} />
+            <Route path="/panel/imagenes" component={ImageLibraryModule} />
             <Route path="/panel/usuarios" component={UsersModule} />
             <Route path="/panel/clientes" component={ClientsModule} />
             <Route path="/panel/consultas" component={ConsultationsAdminModule} />
