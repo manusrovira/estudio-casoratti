@@ -52,9 +52,36 @@ export type MediaManifestEntry = {
   references: MediaReference[];
 };
 
+/**
+ * Una **aparición** de imagen: un lugar concreto del sitio donde se usa una
+ * imagen. Cada aparición tiene su propio identificador y se administra por
+ * separado, aunque dos apariciones usen el mismo archivo físico.
+ */
+export type MediaOccurrenceRecord = {
+  /** Identificador único de la aparición, p. ej. "home-hero". */
+  occurrenceId: string;
+  /** Ruta lógica del archivo físico, p. ej. "assets/casoratti-hero.jpg". */
+  imageLogicalPath: string;
+  /** Página del sitio donde aparece. */
+  page: string;
+  /** Sección concreta dentro de la página. */
+  section: string;
+  /** Componente que la renderiza. */
+  component: string;
+  /** Archivo del código donde se usa, p. ej. "client/src/pages/SitePages.tsx". */
+  file: string;
+  /** Línea del código donde se usa (0 si no se pudo resolver). */
+  line: number;
+  /** "detected" cuando el uso se resolvió; "pending" cuando no. */
+  status: "detected" | "pending";
+};
+
 export type MediaManifest = {
   generatedAt: string;
+  /** Archivos físicos del sitio. */
   entries: MediaManifestEntry[];
+  /** Apariciones: cada lugar del sitio donde se usa una imagen. */
+  occurrences: MediaOccurrenceRecord[];
 };
 
 const numberFormatter = new Intl.NumberFormat("es-AR", {
@@ -88,7 +115,7 @@ export function formatMediaBytes(bytes: number): string {
 
 /** Manifiesto vacío: lo que se usa cuando el manifiesto todavía no está. */
 export function emptyMediaManifest(): MediaManifest {
-  return { generatedAt: "", entries: [] };
+  return { generatedAt: "", entries: [], occurrences: [] };
 }
 
 /**

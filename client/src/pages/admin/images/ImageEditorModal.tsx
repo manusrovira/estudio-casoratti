@@ -17,9 +17,16 @@ import {
   logMediaActivity,
   publicMediaUrl,
   replaceImage,
+  updateOccurrenceMetadata,
+  upsertOccurrenceImage,
   uploadImage,
 } from "./media-service";
-import { withCacheVersion, type InventoryItem } from "./media-inventory";
+import { validateImageFile } from "./media-validator";
+import {
+  withCacheVersion,
+  type InventoryItem,
+  type OccurrenceItem,
+} from "./media-inventory";
 
 /**
  * Editor visual de una imagen.
@@ -28,11 +35,20 @@ import { withCacheVersion, type InventoryItem } from "./media-inventory";
  * `media-editor.ts` y se rasterizan en un `<canvas>`: el resultado es un
  * archivo real (un `File`) que después se sube a Storage. No hay
  * dependencias: nada de Cropper.js.
+ *
+ * El mismo editor sirve para las **apariciones**: cuando se le pasa una
+ * aparición, la imagen que se edita es la que usa esa aparición y el
+ * resultado se guarda con `upsertOccurrenceImage`, así que las demás
+ * apariciones del mismo archivo no cambian.
  */
 
 type ImageEditorModalProps = {
   item: InventoryItem;
   folders: string[];
+  /** Aparición a editar: cuando está, el editor trabaja sobre esa aparición. */
+  occurrence?: OccurrenceItem | null;
+  /** Con "replace" se resalta el bloque de elegir un archivo nuevo. */
+  focus?: "edit" | "replace";
   onClose: () => void;
   onSaved: (message: string) => void;
 };
@@ -93,6 +109,8 @@ function baseNameOf(name: string): string {
 export function ImageEditorModal({
   item,
   folders,
+  occurrence = null,
+  focus = "edit",
   onClose,
   onSaved,
 }: ImageEditorModalProps) {
@@ -108,16 +126,31 @@ export function ImageEditorModal({
   const [newName, setNewName] = useState("");
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  /* Archivo nuevo elegido por el administrador (modo aparición). */
+  const [pickedFile, setPickedFile] = useState<File | null>(null);
+  const [pickedName, setPickedName] = useState("");
+  /* Ficha descriptiva de la aparición. */
+  const [metaTitle, setMetaTitle] = useState("");
+  const [metaAlt, setMetaAlt] = useState("");
+  const [metaDescription, setMetaDescription] = useState("");
+  const [metaCategory, setMetaCategory] = useState("");
+  const [metaTags, setMetaTags] = useState("");
+  const [metaConfirm, setMetaConfirm] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const compareRef = useRef<HTMLCanvasElement | null>(null);
   const contextRef = useRef<HTMLCanvasElement | null>(null);
 
+  /* En modo aparición se edita la imagen que usa esa aparición. */
+  const sourceUrl = occurrence
+    ? occurrence.publicUrl || occurrence.bundleUrl || item.publicUrl
+    : item.publicUrl;
+
   /* --------------------------------------------------------------- carga */
 
   useEffect(() => {
     let cancelled = false;
-    if (!item.publicUrl) {
+    if (!sourceUrl) {
       setLoadError(
         "Este asset no tiene una URL pública: el build no lo emite porque ningún componente del sitio lo usa. Para editarlo hay que importarlo primero en el sitio.",
       );
@@ -153,13 +186,24 @@ export function ImageEditorModal({
           "No se pudo cargar la imagen para editarla. Revisá la URL pública de la imagen.",
         );
       };
-      retry.src = item.publicUrl;
+      retry.src = sourceUrl;
     };
-    img.src = item.publicUrl;
+    img.src = sourceUrl;
     return () => {
       cancelled = true;
     };
-  }, [item.publicUrl]);
+  }, [sourceUrl]);
+
+  /* La ficha descriptiva de la aparición se carga con el modal. */
+  useEffect(() => {
+    if (!occurrence) return;
+    setMetaTitle(occurrence.metadata.title ?? "");
+    setMetaAlt(occurrence.metadata.altText ?? "");
+    setMetaDescription(occurrence.metadata.description ?? "");
+    setMetaCategory(occurrence.metadata.category ?? "");
+    setMetaTags(occurrence.metadata.tags.join(", "));
+    setMetaConfirm(false);
+  }, [occurrence]);
 
   /* -------------------------------------------------------------- estado */
 
@@ -468,6 +512,146 @@ export function ImageEditorModal({
     onSaved(`Se actualizó ${item.name}.`);
   }, [buildFile, item.logicalPath, item.name, item.rowId, onSaved, verifyServed]);
 
+  /* --------------------------------------------------------- apariciones */
+
+  /**
+   * Carga un archivo nuevo elegido por el administrador. El lienzo pasa a
+   * mostrar ese archivo: de ahí sale la versión que se guarda.
+   */
+  const pickFile = useCallback(async (file: File) => {
+    const validation = await validateImageFile(file);
+    if (!validation.ok) {
+      setFeedback({ kind: "error", text: validation.error });
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      setImage(img);
+      setState(defaultEditorState(img.naturalWidth, img.naturalHeight));
+      setScalePercent(100);
+      setPreset("free");
+      setPickedFile(file);
+      setPickedName(file.name);
+      setLoadError(null);
+      setFeedback({
+        kind: "info",
+        text: `Se cargó «${file.name}». Recortá, ajustá y guardá para cambiar sólo esta aparición.`,
+      });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      setFeedback({
+        kind: "error",
+        text: "No se pudo leer el archivo elegido.",
+      });
+    };
+    img.src = url;
+  }, []);
+
+  /**
+   * Guarda la imagen editada **sólo para esta aparición**: la fila del
+   * archivo físico no se toca, así que las demás apariciones que usan el
+   * mismo archivo siguen mostrando la imagen de siempre.
+   */
+  const saveOccurrence = useCallback(async () => {
+    if (!occurrence) return;
+
+    /* Si se puede exportar el lienzo, se guarda el recorte; si no, se sube
+       el archivo elegido tal cual. */
+    const built = await buildFile(baseNameOf(item.name));
+    const file = built ?? pickedFile;
+    if (!file) {
+      setFeedback({
+        kind: "error",
+        text: "No se pudo generar el archivo de la imagen editada.",
+      });
+      return;
+    }
+
+    setSaving(true);
+    setFeedback(null);
+
+    const result = await upsertOccurrenceImage(
+      occurrence.occurrenceId,
+      file,
+      { backup: true },
+    );
+
+    if (!result.ok) {
+      setSaving(false);
+      setFeedback({ kind: "error", text: result.error });
+      return;
+    }
+
+    const served = await verifyServed(publicMediaUrl(result.storagePath));
+    setSaving(false);
+
+    if (!served.ok) {
+      setFeedback({
+        kind: "error",
+        text: `La imagen se guardó, pero no se pudo verificar que se esté sirviendo (estado ${served.status}).`,
+      });
+      onSaved(`Se actualizó la imagen de ${occurrence.page}.`);
+      return;
+    }
+
+    setFeedback({
+      kind: "ok",
+      text: `Se cambió la imagen de esta aparición y se verificó que se sirve (estado ${served.status}). Las demás apariciones del archivo no cambian.`,
+    });
+    onSaved(`Se actualizó la imagen de ${occurrence.page}.`);
+  }, [buildFile, item.name, occurrence, onSaved, pickedFile, verifyServed]);
+
+  /** Guarda la ficha descriptiva de la aparición (texto alternativo, etc.). */
+  const saveOccurrenceMetadata = useCallback(async () => {
+    if (!occurrence) return;
+
+    setSaving(true);
+    const result = await updateOccurrenceMetadata(
+      occurrence.occurrenceId,
+      {
+        title: metaTitle.trim() || null,
+        alt_text: metaAlt.trim() || null,
+        description: metaDescription.trim() || null,
+        category: metaCategory.trim() || null,
+        tags: metaTags
+          .split(",")
+          .map(tag => tag.trim())
+          .filter(Boolean),
+      },
+      {
+        name: occurrence.name,
+        format: occurrence.format,
+        bytes: occurrence.bytes,
+        width: occurrence.width,
+        height: occurrence.height,
+      },
+    );
+    setSaving(false);
+    setMetaConfirm(false);
+
+    if (!result.ok) {
+      setFeedback({ kind: "error", text: result.error });
+      return;
+    }
+
+    setFeedback({
+      kind: "ok",
+      text: "Se actualizó la información de esta aparición.",
+    });
+    onSaved("Se actualizó la información de la aparición.");
+  }, [
+    metaAlt,
+    metaCategory,
+    metaDescription,
+    metaTags,
+    metaTitle,
+    occurrence,
+    onSaved,
+  ]);
+
   /* --------------------------------------------------------------- render */
 
   const crop = state.crop;
@@ -486,9 +670,11 @@ export function ImageEditorModal({
       <div className="admin-media-modal-panel">
         <div className="admin-media-modal-head">
           <div>
-            <h2>Editar imagen</h2>
+            <h2>{occurrence ? "Editar la aparición" : "Editar imagen"}</h2>
             <p>
-              {item.name} · {item.logicalPath}
+              {occurrence
+                ? `${occurrence.page} · ${occurrence.section} · ${occurrence.component} · ${occurrence.name}`
+                : `${item.name} · ${item.logicalPath}`}
             </p>
           </div>
           <button
@@ -532,7 +718,7 @@ export function ImageEditorModal({
               <div className="admin-media-compare">
                 <figure>
                   <figcaption>Original</figcaption>
-                  <img src={item.publicUrl} alt={item.metadata.altText ?? item.name} />
+                  <img src={sourceUrl} alt={occurrence?.metadata.altText ?? item.metadata.altText ?? item.name} />
                 </figure>
                 <figure>
                   <figcaption>Resultado</figcaption>
@@ -953,6 +1139,148 @@ export function ImageEditorModal({
             </div>
           </div>
 
+          {occurrence && (
+            <div
+              className={
+                focus === "replace"
+                  ? "admin-media-detail-block admin-media-highlight"
+                  : "admin-media-detail-block"
+              }
+            >
+              <h3>Imagen de esta aparición</h3>
+              <div className="admin-media-field-grid">
+                <div className="filter-field">
+                  <label htmlFor="media-occurrence-file">
+                    Elegir un archivo nuevo
+                  </label>
+                  <input
+                    id="media-occurrence-file"
+                    className="admin-input"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/avif,image/svg+xml"
+                    onChange={event => {
+                      const file = event.target.files?.[0];
+                      if (file) void pickFile(file);
+                      event.target.value = "";
+                    }}
+                  />
+                </div>
+              </div>
+              <p className="admin-media-hint" style={{ marginTop: ".6rem" }}>
+                {pickedFile
+                  ? `Archivo elegido: ${pickedName}. Podés recortarlo, ajustarlo y enmarcarlo antes de guardar.`
+                  : `Ahora se edita la imagen que usa esta aparición (${occurrence.name}). Si elegís un archivo nuevo, se reemplaza sólo acá: las demás apariciones del mismo archivo no cambian.`}
+              </p>
+              <div className="admin-media-warning" style={{ marginTop: ".8rem" }}>
+                <strong>Esta aparición y las demás van por separado.</strong>
+                <p style={{ margin: ".4rem 0 0" }}>
+                  El archivo que usa esta aparición lo comparten{" "}
+                  {occurrence.sharedCount}{" "}
+                  {occurrence.sharedCount === 1 ? "aparición" : "apariciones"} del
+                  sitio. Al guardar acá sólo cambia esta: el archivo físico y el
+                  resto de las apariciones quedan como están.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {occurrence && (
+            <div className="admin-media-detail-block">
+              <h3>Información de la aparición</h3>
+              <div className="admin-media-field-grid">
+                <div className="filter-field">
+                  <label htmlFor="media-occurrence-alt">Texto alternativo</label>
+                  <input
+                    id="media-occurrence-alt"
+                    className="admin-input"
+                    type="text"
+                    value={metaAlt}
+                    onChange={event => setMetaAlt(event.target.value)}
+                  />
+                </div>
+                <div className="filter-field">
+                  <label htmlFor="media-occurrence-title">Título</label>
+                  <input
+                    id="media-occurrence-title"
+                    className="admin-input"
+                    type="text"
+                    value={metaTitle}
+                    onChange={event => setMetaTitle(event.target.value)}
+                  />
+                </div>
+                <div className="filter-field">
+                  <label htmlFor="media-occurrence-description">Descripción</label>
+                  <input
+                    id="media-occurrence-description"
+                    className="admin-input"
+                    type="text"
+                    value={metaDescription}
+                    onChange={event => setMetaDescription(event.target.value)}
+                  />
+                </div>
+                <div className="filter-field">
+                  <label htmlFor="media-occurrence-category">Categoría</label>
+                  <input
+                    id="media-occurrence-category"
+                    className="admin-input"
+                    type="text"
+                    value={metaCategory}
+                    onChange={event => setMetaCategory(event.target.value)}
+                  />
+                </div>
+                <div className="filter-field">
+                  <label htmlFor="media-occurrence-tags">Etiquetas</label>
+                  <input
+                    id="media-occurrence-tags"
+                    className="admin-input"
+                    type="text"
+                    placeholder="Separadas por coma"
+                    value={metaTags}
+                    onChange={event => setMetaTags(event.target.value)}
+                  />
+                </div>
+              </div>
+
+              {metaConfirm ? (
+                <div className="admin-media-warning" style={{ marginTop: ".8rem" }}>
+                  <strong>¿Guardar la información de esta aparición?</strong>
+                  <p style={{ margin: ".4rem 0 0" }}>
+                    El texto alternativo, el título, la descripción, la categoría
+                    y las etiquetas quedan asociados a esta aparición, no al
+                    archivo.
+                  </p>
+                  <div className="admin-row" style={{ marginTop: ".8rem" }}>
+                    <button
+                      type="button"
+                      className="admin-button admin-button-copper"
+                      disabled={saving}
+                      onClick={() => void saveOccurrenceMetadata()}
+                    >
+                      {saving ? "Guardando…" : "Sí, guardar"}
+                    </button>
+                    <button
+                      type="button"
+                      className="admin-button admin-button-ghost"
+                      onClick={() => setMetaConfirm(false)}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="admin-button admin-button-ghost"
+                  style={{ marginTop: ".8rem" }}
+                  disabled={saving}
+                  onClick={() => setMetaConfirm(true)}
+                >
+                  Guardar información
+                </button>
+              )}
+            </div>
+          )}
+
           {mode === "new" && (
             <div className="admin-media-detail-block">
               <h3>Guardar como nueva imagen</h3>
@@ -1012,41 +1340,54 @@ export function ImageEditorModal({
           >
             Cerrar
           </button>
-          <button
-            type="button"
-            className="admin-button admin-button-ghost"
-            onClick={() => setMode(mode === "new" ? "none" : "new")}
-            disabled={saving || !image}
-          >
-            Guardar como nueva imagen
-          </button>
-          {mode === "new" && (
+          {occurrence ? (
             <button
               type="button"
               className="admin-button admin-button-copper"
-              onClick={() => void saveAsNew()}
+              onClick={() => void saveOccurrence()}
               disabled={saving || !image}
             >
-              {saving ? "Guardando…" : "Confirmar y guardar"}
+              {saving ? "Guardando…" : "Guardar sólo esta aparición"}
             </button>
-          )}
-          <button
-            type="button"
-            className="admin-button admin-button-danger"
-            onClick={() => setMode(mode === "replace" ? "none" : "replace")}
-            disabled={saving || !image}
-          >
-            Reemplazar la original
-          </button>
-          {mode === "replace" && (
-            <button
-              type="button"
-              className="admin-button admin-button-danger"
-              onClick={() => void replaceOriginal()}
-              disabled={saving || !image}
-            >
-              {saving ? "Reemplazando…" : "Sí, reemplazar"}
-            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="admin-button admin-button-ghost"
+                onClick={() => setMode(mode === "new" ? "none" : "new")}
+                disabled={saving || !image}
+              >
+                Guardar como nueva imagen
+              </button>
+              {mode === "new" && (
+                <button
+                  type="button"
+                  className="admin-button admin-button-copper"
+                  onClick={() => void saveAsNew()}
+                  disabled={saving || !image}
+                >
+                  {saving ? "Guardando…" : "Confirmar y guardar"}
+                </button>
+              )}
+              <button
+                type="button"
+                className="admin-button admin-button-danger"
+                onClick={() => setMode(mode === "replace" ? "none" : "replace")}
+                disabled={saving || !image}
+              >
+                Reemplazar la original
+              </button>
+              {mode === "replace" && (
+                <button
+                  type="button"
+                  className="admin-button admin-button-danger"
+                  onClick={() => void replaceOriginal()}
+                  disabled={saving || !image}
+                >
+                  {saving ? "Reemplazando…" : "Sí, reemplazar"}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>

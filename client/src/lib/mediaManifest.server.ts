@@ -12,7 +12,9 @@
  *     WEBP, GIF, AVIF y SVG), sin dependencias externas;
  *   - busca las referencias reales a cada imagen en el código fuente;
  *   - calcula la ruta lógica estable, la ruta física y la URL pública que
- *     sirve el sitio.
+ *     sirve el sitio;
+ *   - escanea las **apariciones**: cada lugar del sitio donde se usa una
+ *     imagen, con su identificador, su archivo físico y su sitio de uso.
  */
 
 import fs from "node:fs";
@@ -22,6 +24,7 @@ import {
   type MediaFormat,
   type MediaManifest,
   type MediaManifestEntry,
+  type MediaOccurrenceRecord,
   type MediaReference,
   type MediaReferenceKind,
 } from "./mediaManifest";
@@ -43,6 +46,10 @@ const CLIENT_DIR = "client";
  * Archivos del propio módulo de medios. Se excluyen del escaneo de
  * referencias porque mencionan rutas lógicas en sus comentarios: contarlas
  * como uso real del sitio sería inventar datos.
+ *
+ * `mediaAssets.ts` entra por lo mismo y por algo más: es el mapa entre asset
+ * y ruta lógica, no un lugar donde se renderice una imagen. Sus importaciones
+ * no son sitios de uso.
  */
 const MEDIA_MODULE_FILES = new Set([
   "mediaManifest.ts",
@@ -50,6 +57,7 @@ const MEDIA_MODULE_FILES = new Set([
   "mediaManifest.server.test.ts",
   "mediaManifestPlugin.ts",
   "mediaResolver.ts",
+  "mediaAssets.ts",
 ]);
 
 /** Extensiones de código fuente donde se buscan referencias. */
@@ -666,6 +674,325 @@ export function matchEmittedAsset(
 }
 
 // -----------------------------------------------------------------------------
+// Apariciones
+// -----------------------------------------------------------------------------
+
+/** Archivo donde vive el registro de apariciones del sitio. */
+const OCCURRENCE_REGISTRY_FILE = path.join("src", "data", "mediaOccurrences.ts");
+
+/** Archivo donde viven las áreas de práctica (slugs y labels reales). */
+const PRACTICE_AREAS_FILE = path.join("src", "data", "siteContent.ts");
+
+/** Prefijo de las apariciones del detalle de un área. */
+const AREA_OCCURRENCE_PREFIX = "area-detail-";
+
+/** Una aparición declarada en el registro del sitio. */
+type DeclaredOccurrence = {
+  id: string;
+  page: string;
+  section: string;
+  component: string;
+  /** Identificador del import que trae la imagen (o `null`). */
+  imageRef: string | null;
+};
+
+/** Un área de práctica leída del contenido real del sitio. */
+type DeclaredPracticeArea = {
+  slug: string;
+  label: string;
+  /** Identificador del import que trae la imagen (o `null`). */
+  imageRef: string | null;
+};
+
+/** Un lugar del código donde se usa una aparición. */
+export type OccurrenceUseSite = {
+  /** Ruta del archivo, relativa al repositorio. */
+  file: string;
+  /** Línea (1-based) del uso. */
+  line: number;
+};
+
+/** Lee un archivo de código; devuelve `null` si no se puede leer. */
+function readSourceFile(file: string): string | null {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Importaciones con nombre de un archivo: identificador → especificador.
+ * Son las que traen un asset (`import foto from "@/assets/x.jpg"`).
+ */
+export function parseImportSpecifiers(text: string): Map<string, string> {
+  const specifiers = new Map<string, string>();
+  const pattern = /\bimport\s+([A-Za-z0-9_$]+)\s+from\s+["']([^"']+)["']/g;
+  let match = pattern.exec(text);
+  while (match) {
+    specifiers.set(match[1], match[2]);
+    match = pattern.exec(text);
+  }
+  return specifiers;
+}
+
+/**
+ * Ruta lógica del asset que trae una importación.
+ *
+ *   "@/assets/x.jpg" (desde `client/src/data`) → "assets/x.jpg"
+ *
+ * Devuelve `null` si el especificador no es un archivo local.
+ */
+export function logicalPathOfSpecifier(specifier: string, fileDir: string): string | null {
+  if (!specifier) return null;
+  if (specifier.startsWith("@/")) {
+    return logicalPathFromPhysical(`${CLIENT_DIR}/src/${specifier.slice(2)}`);
+  }
+  if (specifier.startsWith("./") || specifier.startsWith("../")) {
+    return logicalPathFromPhysical(path.posix.join(toPosix(fileDir), specifier));
+  }
+  return null;
+}
+
+/**
+ * Valor de un campo dentro de un objeto literal: texto entre comillas o
+ * identificador (`image: heroImage`).
+ */
+function fieldValue(body: string, name: string): string | null {
+  const pattern = new RegExp(
+    `\\b${name}\\s*:\\s*(?:"([^"]*)"|([A-Za-z0-9_$]+(?:\\.[A-Za-z0-9_$]+)*))`,
+  );
+  const match = pattern.exec(body);
+  if (!match) return null;
+  return match[1] ?? match[2] ?? null;
+}
+
+/**
+ * Texto de un literal de objeto o de array, contando llaves o corchetes.
+ * El par vacío de los tipos (`PracticeArea[]`) se saltea.
+ */
+function literalAfter(
+  text: string,
+  anchor: string,
+  open: "{" | "[",
+  close: "}" | "]",
+): string | null {
+  const anchorIndex = text.indexOf(anchor);
+  if (anchorIndex < 0) return null;
+
+  let start = -1;
+  for (let index = anchorIndex + anchor.length; index < text.length; index += 1) {
+    if (text[index] !== open) continue;
+    if (open === "[" && text[index + 1] === "]") continue;
+    start = index;
+    break;
+  }
+  if (start < 0) return null;
+
+  let depth = 0;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === open) depth += 1;
+    else if (char === close) {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * Apariciones declaradas en el registro: los objetos literales con
+ * identificador entre comillas. Las apariciones que se derivan de un slug
+ * (las del detalle de área) no aparecen acá: se expanden aparte.
+ */
+export function parseDeclaredOccurrences(text: string): DeclaredOccurrence[] {
+  const declared: DeclaredOccurrence[] = [];
+  const pattern = /"([A-Za-z0-9_-]+)"\s*:\s*\{([^{}]*)\}/g;
+  let match = pattern.exec(text);
+  while (match) {
+    const body = match[2];
+    const id = fieldValue(body, "id");
+    const page = fieldValue(body, "page");
+    const section = fieldValue(body, "section");
+    const component = fieldValue(body, "component");
+    if (id && page && section && component) {
+      declared.push({
+        id,
+        page,
+        section,
+        component,
+        imageRef: fieldValue(body, "image"),
+      });
+    }
+    match = pattern.exec(text);
+  }
+  return declared;
+}
+
+/** Áreas de práctica reales: slug, label y el asset que usa cada una. */
+export function parseDeclaredPracticeAreas(text: string): DeclaredPracticeArea[] {
+  const literal = literalAfter(text, "practiceAreas", "[", "]");
+  if (!literal) return [];
+
+  const areas: DeclaredPracticeArea[] = [];
+  const pattern = /\{([^{}]*)\}/g;
+  let match = pattern.exec(literal);
+  while (match) {
+    const body = match[1];
+    const slug = fieldValue(body, "slug");
+    if (slug) {
+      areas.push({
+        slug,
+        label: fieldValue(body, "label") ?? "",
+        imageRef: fieldValue(body, "image"),
+      });
+    }
+    match = pattern.exec(literal);
+  }
+  return areas;
+}
+
+/** Valor de una constante de texto declarada en el registro. */
+function stringConstant(text: string, name: string): string | null {
+  const pattern = new RegExp(`export const ${name}\\s*=\\s*"([^"]*)"`);
+  return pattern.exec(text)?.[1] ?? null;
+}
+
+/**
+ * Sitios de uso de las apariciones en el código del sitio.
+ *
+ * Se buscan los atributos `occurrence="<id>"` y las plantillas
+ * `occurrence={`area-detail-...`}`.
+ *
+ * No se sigue el mapa `images` de las páginas: es una indirección que el
+ * escáner no puede resolver. Por eso el registro explícito de apariciones es
+ * la fuente de verdad, y acá sólo se busca dónde se usa cada identificador.
+ */
+export function findOccurrenceUseSites(options: MediaScanOptions): {
+  byId: Map<string, OccurrenceUseSite[]>;
+  areaTemplate: OccurrenceUseSite[];
+} {
+  const byId = new Map<string, OccurrenceUseSite[]>();
+  const areaTemplate: OccurrenceUseSite[] = [];
+
+  for (const file of collectSourceFiles(options)) {
+    const extension = path.extname(file).toLowerCase();
+    if (extension !== ".ts" && extension !== ".tsx") continue;
+
+    const text = readSourceFile(file);
+    if (!text) continue;
+
+    const relative = relativePosix(options.repoRoot, file);
+    const lines = text.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (!line || !line.includes("occurrence")) continue;
+      const lineNumber = index + 1;
+
+      const literal = /\boccurrence\s*=\s*["']([^"']+)["']/g;
+      let match = literal.exec(line);
+      while (match) {
+        const id = match[1];
+        const bucket = byId.get(id) ?? [];
+        bucket.push({ file: relative, line: lineNumber });
+        byId.set(id, bucket);
+        match = literal.exec(line);
+      }
+
+      const template = /\boccurrence\s*=\s*\{`([^`]*)`\}/g;
+      match = template.exec(line);
+      while (match) {
+        if (match[1].startsWith(AREA_OCCURRENCE_PREFIX)) {
+          areaTemplate.push({ file: relative, line: lineNumber });
+        }
+        match = template.exec(line);
+      }
+    }
+  }
+
+  return { byId, areaTemplate };
+}
+
+/**
+ * Apariciones reales del sitio: cada lugar donde se usa una imagen.
+ *
+ * Se lee el registro de apariciones (identificador, página, sección y
+ * componente) y se buscan los sitios de uso en el código. Las apariciones del
+ * detalle de un área se expanden contra los slugs reales de `practiceAreas`:
+ * catorce apariciones concretas, no una sola.
+ *
+ * Lo que no se puede resolver de forma estática queda como "pending": no se
+ * inventan ubicaciones.
+ */
+export function scanOccurrences(options: MediaScanOptions): MediaOccurrenceRecord[] {
+  const clientDir = options.clientDir ?? path.join(options.repoRoot, CLIENT_DIR);
+  const registryPath = path.join(clientDir, OCCURRENCE_REGISTRY_FILE);
+  const contentPath = path.join(clientDir, PRACTICE_AREAS_FILE);
+
+  const registryText = readSourceFile(registryPath);
+  if (!registryText) return [];
+
+  const registryDir = relativePosix(options.repoRoot, path.dirname(registryPath));
+  const registryImports = parseImportSpecifiers(registryText);
+  const declared = parseDeclaredOccurrences(registryText);
+  const { byId, areaTemplate } = findOccurrenceUseSites(options);
+
+  const contentText = readSourceFile(contentPath);
+  const contentDir = contentText
+    ? relativePosix(options.repoRoot, path.dirname(contentPath))
+    : registryDir;
+  const contentImports = contentText
+    ? parseImportSpecifiers(contentText)
+    : new Map<string, string>();
+  const areas = contentText ? parseDeclaredPracticeAreas(contentText) : [];
+
+  const areaPage = stringConstant(registryText, "AREA_OCCURRENCE_PAGE");
+  const areaComponent = stringConstant(registryText, "AREA_OCCURRENCE_COMPONENT");
+
+  const records: MediaOccurrenceRecord[] = [];
+
+  for (const occurrence of declared) {
+    const useSite = byId.get(occurrence.id)?.[0];
+    const imageLogicalPath = occurrence.imageRef
+      ? logicalPathOfSpecifier(
+          registryImports.get(occurrence.imageRef) ?? "",
+          registryDir,
+        )
+      : null;
+    records.push({
+      occurrenceId: occurrence.id,
+      imageLogicalPath: imageLogicalPath ?? "",
+      page: occurrence.page,
+      section: occurrence.section,
+      component: occurrence.component,
+      file: useSite?.file ?? "",
+      line: useSite?.line ?? 0,
+      status: useSite && imageLogicalPath ? "detected" : "pending",
+    });
+  }
+
+  for (const area of areas) {
+    const useSite = areaTemplate[0];
+    const imageLogicalPath = area.imageRef
+      ? logicalPathOfSpecifier(contentImports.get(area.imageRef) ?? "", contentDir)
+      : null;
+    records.push({
+      occurrenceId: `${AREA_OCCURRENCE_PREFIX}${area.slug}`,
+      imageLogicalPath: imageLogicalPath ?? "",
+      page: areaPage ?? "",
+      section: area.label,
+      component: areaComponent ?? "",
+      file: useSite?.file ?? "",
+      line: useSite?.line ?? 0,
+      status: useSite && imageLogicalPath ? "detected" : "pending",
+    });
+  }
+
+  return records;
+}
+
+// -----------------------------------------------------------------------------
 // Manifiesto completo
 // -----------------------------------------------------------------------------
 
@@ -687,7 +1014,9 @@ function publicPathFor(image: ScannedImage, options: ManifestBuildOptions): stri
 
 /**
  * Manifiesto real de las imágenes del sitio: cada imagen con su ruta física,
- * su URL pública, formato, peso, dimensiones y sus referencias en el código.
+ * su URL pública, formato, peso, dimensiones y sus referencias en el código;
+ * y además las apariciones, que son los lugares del sitio donde se usa cada
+ * imagen.
  */
 export function buildMediaManifest(options: ManifestBuildOptions): MediaManifest {
   const images = scanImages(options);
@@ -706,5 +1035,9 @@ export function buildMediaManifest(options: ManifestBuildOptions): MediaManifest
     references: references.get(image.logicalPath) ?? [],
   }));
   entries.sort((a, b) => a.logicalPath.localeCompare(b.logicalPath, "es"));
-  return { generatedAt: new Date().toISOString(), entries };
+  return {
+    generatedAt: new Date().toISOString(),
+    entries,
+    occurrences: scanOccurrences(options),
+  };
 }

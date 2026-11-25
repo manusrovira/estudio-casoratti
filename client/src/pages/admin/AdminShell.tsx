@@ -13,6 +13,7 @@ import {
 import { Link, Route, Switch, useLocation } from "wouter";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { canAccessAdminPanel, ROLE_LABELS } from "@/lib/rbac";
+import { useMediaOccurrenceCount } from "@/lib/mediaOccurrenceCount";
 import { AuditModule } from "./AuditModule";
 import { CasesModule } from "./CasesModule";
 import { ClientsModule } from "./ClientsModule";
@@ -118,6 +119,7 @@ function AccessDenied() {
 export default function AdminShell() {
   const { user, role, loading, configured, signOut } = useAuthContext();
   const [location] = useLocation();
+  const occurrenceCount = useMediaOccurrenceCount();
   const meta = pageMeta[location] ?? pageMeta["/panel"];
 
   if (!configured) {
@@ -181,7 +183,9 @@ export default function AdminShell() {
                 className={isActive ? "admin-nav-link active" : "admin-nav-link"}
               >
                 <Icon size={15} />
-                {item.label}
+                {item.href === "/panel/imagenes" && occurrenceCount !== null
+                  ? `${item.label} (${occurrenceCount})`
+                  : item.label}
               </Link>
             );
           })}

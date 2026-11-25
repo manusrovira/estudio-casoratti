@@ -14,10 +14,15 @@
  * pintar el inventario, filtrarlo y resumirlo.
  */
 
-import type { MediaManifest, MediaReference } from "@/lib/mediaManifest";
+import type {
+  MediaManifest,
+  MediaOccurrenceRecord,
+  MediaReference,
+} from "@/lib/mediaManifest";
 import {
   mediaLogicalPath,
   publicMediaUrl,
+  type MediaOccurrenceRow,
   type MediaRow,
 } from "./media-service";
 import { isProtectedMediaPath, normalizeMediaName } from "./media-validator";
@@ -248,6 +253,10 @@ export function mergeMediaInventory(
 
   /* 2. Medios de Storage sin asset del manifiesto. */
   for (const row of rowsByLogical.values()) {
+    /* Las apariciones tienen su propio registro: no son archivos de la
+       biblioteca física y no se listan acá. */
+    if ((row as { occurrence_id?: string | null }).occurrence_id) continue;
+
     const storagePath = row.storage_path ?? null;
     const publicPath = storagePath ? storageUrl(storagePath) : "";
     const referenceCount = 0;
@@ -457,4 +466,465 @@ export function mediaUsageWarning(item: InventoryItem): string | null {
   return `Esta imagen está siendo utilizada en ${places} ${
     places === 1 ? "lugar" : "lugares"
   } del sitio web. Si la eliminás, podrías generar imágenes rotas o espacios vacíos.`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Apariciones                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Aparición tal como la declara el manifiesto del build.
+ *
+ * Es el mismo tipo que emite el build: cada vez que una imagen se usa en un
+ * componente queda registrada una aparición con el lugar exacto (página,
+ * sección y componente) y el archivo que usa.
+ */
+export type MediaOccurrenceManifestRecord = MediaOccurrenceRecord;
+
+/** Estado de una aparición frente al archivo que usa. */
+export type OccurrenceStatus = "unchanged" | "replaced" | "hidden";
+
+/** Texto de cada estado, con la voz del panel. */
+export const OCCURRENCE_STATUS_LABELS: Record<OccurrenceStatus, string> = {
+  unchanged: "Sin cambios",
+  replaced: "Reemplazada",
+  hidden: "Oculta",
+};
+
+/** Una aparición del sitio: un lugar concreto donde se usa una imagen. */
+export type OccurrenceItem = {
+  /** Clave estable dentro de la interfaz. */
+  key: string;
+  /** Identificador de la aparición (el que usa el sitio para resolverla). */
+  occurrenceId: string;
+  /** Ruta lógica del archivo físico que usa la aparición. */
+  imageLogicalPath: string;
+  /** Nombre del archivo. */
+  name: string;
+  /** Página del sitio donde aparece. */
+  page: string;
+  /** Sección de la página donde aparece. */
+  section: string;
+  /** Componente que la usa. */
+  component: string;
+  /** Archivo del código donde se detectó la aparición. */
+  sourceFile: string;
+  /** Línea del archivo donde se detectó. */
+  sourceLine: number;
+  /** El escáner del build la detectó (`detected`) o está pendiente. */
+  detected: boolean;
+  /** Ruta física del archivo. */
+  physicalPath: string;
+  /** Ruta dentro del bucket que se está sirviendo (si hay override). */
+  storagePath: string | null;
+  /** URL que usa la página ahora mismo. */
+  publicUrl: string;
+  /** URL compilada del asset del paquete (la imagen original). */
+  bundleUrl: string;
+  width: number | null;
+  height: number | null;
+  bytes: number;
+  format: string;
+  modifiedAt: string | null;
+  /** Cuántas apariciones comparten el mismo archivo. */
+  sharedCount: number;
+  /** Estado de esta aparición. */
+  status: OccurrenceStatus;
+  /** Ficha descriptiva de la aparición. */
+  metadata: MediaMetadata;
+  /** ¿La aparición tiene ficha propia en la base? */
+  hasOverride: boolean;
+};
+
+/** Números del encabezado de la pestaña de apariciones. */
+export type OccurrenceSummary = {
+  /** Archivos físicos usados por el sitio. */
+  physicalFiles: number;
+  /** Apariciones totales. */
+  totalOccurrences: number;
+  /** Páginas que tienen al menos una imagen. */
+  pagesWithImages: number;
+  /** Imágenes que se usan en más de una sección. */
+  sharedImages: number;
+  /** Imágenes de la biblioteca que no usa ninguna aparición. */
+  unusedImages: number;
+};
+
+/** Filtros de la pestaña de apariciones. */
+export type OccurrenceFilters = {
+  search: string;
+  page: string;
+  section: string;
+  component: string;
+  status: OccurrenceStatus | "all";
+};
+
+/**
+ * Lee las apariciones del manifiesto.
+ *
+ * El manifiesto es un artefacto del build: puede venir de una versión
+ * anterior que todavía no tenga el campo `occurrences`, así que se lee de
+ * forma tolerante.
+ */
+export function manifestOccurrences(
+  manifest: MediaManifest | null,
+): MediaOccurrenceManifestRecord[] {
+  const raw = manifest?.occurrences;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (item) => item && typeof item.occurrenceId === "string" && item.occurrenceId,
+  );
+}
+
+/**
+ * Fusiona el manifiesto (apariciones detectadas) con las filas de `site_media`
+ * (reemplazos, ocultes y metadatos por aparición).
+ *
+ * Devuelve **un registro por aparición**: no se agrupan las que comparten el
+ * mismo archivo, porque cada una se puede editar o quitar por separado.
+ */
+export function mergeOccurrenceInventory(
+  manifest: MediaManifest | null,
+  rows: MediaRow[],
+  occurrenceRows: MediaOccurrenceRow[],
+  options: { storageUrl?: StorageUrlBuilder } = {},
+): OccurrenceItem[] {
+  const storageUrl = options.storageUrl ?? publicMediaUrl;
+  const records = manifestOccurrences(manifest);
+  const entries = manifest?.entries ?? [];
+
+  const entryByLogical = new Map(entries.map((entry) => [entry.logicalPath, entry]));
+
+  /* Fila física (override del archivo) por ruta lógica. */
+  const fileRowByLogical = new Map<string, MediaRow>();
+  /* Fila completa de una aparición, para traer medidas y peso. */
+  const fullRowByOccurrence = new Map<string, MediaRow>();
+  for (const row of rows ?? []) {
+    const occurrenceId = (row as { occurrence_id?: string | null }).occurrence_id;
+    if (occurrenceId) {
+      fullRowByOccurrence.set(occurrenceId, row);
+      continue;
+    }
+    if (row?.logical_path) fileRowByLogical.set(row.logical_path, row);
+  }
+
+  const overrideByOccurrence = new Map(
+    (occurrenceRows ?? [])
+      .filter((row) => row?.occurrence_id)
+      .map((row) => [row.occurrence_id, row]),
+  );
+
+  /* Cuántas apariciones comparten cada archivo. */
+  const sharedByLogical = new Map<string, number>();
+  for (const record of records) {
+    sharedByLogical.set(
+      record.imageLogicalPath,
+      (sharedByLogical.get(record.imageLogicalPath) ?? 0) + 1,
+    );
+  }
+
+  const items: OccurrenceItem[] = [];
+
+  for (const record of records) {
+    const entry = entryByLogical.get(record.imageLogicalPath) ?? null;
+    const fileRow = fileRowByLogical.get(record.imageLogicalPath) ?? null;
+    const override = overrideByOccurrence.get(record.occurrenceId) ?? null;
+    const fullRow = fullRowByOccurrence.get(record.occurrenceId) ?? null;
+
+    const bundleUrl = entry?.publicPath ?? "";
+    const fileOverridePath = fileRow?.storage_path ?? null;
+
+    let status: OccurrenceStatus = "unchanged";
+    let storagePath: string | null = null;
+    let publicUrl = bundleUrl;
+    let width = entry?.width ?? null;
+    let height = entry?.height ?? null;
+    let bytes = entry?.bytes ?? 0;
+    let format = entry?.format ?? "";
+    let modifiedAt = entry?.modifiedAt ?? null;
+
+    if (override) {
+      if (override.status === "hidden") {
+        /* La aparición no muestra imagen: vuelve al asset del paquete. */
+        status = "hidden";
+        publicUrl = "";
+      } else if (override.storage_path) {
+        status = "replaced";
+        storagePath = override.storage_path;
+        publicUrl = storageUrl(override.storage_path);
+      }
+    }
+
+    /* Si la aparición tiene su propia versión, mandan sus medidas. */
+    if (status === "replaced" && fullRow) {
+      width = fullRow.width ?? width;
+      height = fullRow.height ?? height;
+      bytes = Number(fullRow.size_bytes ?? bytes);
+      format = fullRow.format || format;
+      modifiedAt = fullRow.updated_at ?? modifiedAt;
+    } else if (status === "unchanged" && fileOverridePath && fileRow) {
+      /* El archivo físico tiene una versión nueva: la usan todas sus
+         apariciones salvo las reemplazadas u ocultas. */
+      status = "replaced";
+      width = fileRow.width ?? width;
+      height = fileRow.height ?? height;
+      bytes = Number(fileRow.size_bytes ?? bytes);
+      format = fileRow.format || format;
+      modifiedAt = fileRow.updated_at ?? modifiedAt;
+      storagePath = fileOverridePath;
+      publicUrl = storageUrl(fileOverridePath);
+    }
+
+    const metadataSource = override
+      ? {
+          alt_text: override.alt_text,
+          title: override.title,
+          description: override.description,
+          category: override.category,
+          tags: override.tags,
+        }
+      : fullRow;
+
+    items.push({
+      key: `occurrence:${record.occurrenceId}`,
+      occurrenceId: record.occurrenceId,
+      imageLogicalPath: record.imageLogicalPath,
+      name: entry?.originalName ?? record.imageLogicalPath.split("/").pop() ?? record.imageLogicalPath,
+      page: record.page ?? "",
+      section: record.section ?? "",
+      component: record.component ?? "",
+      sourceFile: record.file ?? "",
+      sourceLine: Number(record.line ?? 0),
+      detected: record.status !== "pending",
+      physicalPath: entry?.physicalPath ?? record.imageLogicalPath,
+      storagePath,
+      publicUrl,
+      bundleUrl,
+      width,
+      height,
+      bytes,
+      format,
+      modifiedAt,
+      sharedCount: sharedByLogical.get(record.imageLogicalPath) ?? 1,
+      status,
+      metadata: metadataSource
+        ? {
+            altText: metadataSource.alt_text ?? null,
+            title: metadataSource.title ?? null,
+            description: metadataSource.description ?? null,
+            category: metadataSource.category ?? null,
+            tags: Array.isArray(metadataSource.tags) ? metadataSource.tags : [],
+          }
+        : EMPTY_METADATA,
+      hasOverride: Boolean(override),
+    });
+  }
+
+  return items;
+}
+
+/* ------------------------------------------------------------------ */
+/* Filtrado de apariciones                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Aplica buscador y filtros sobre las apariciones.
+ *
+ * El buscador mira el nombre del archivo, la ruta lógica, la página, la
+ * sección, el componente y la URL. Los filtros de página, sección,
+ * componente y estado son exactos.
+ */
+export function filterOccurrences(
+  items: OccurrenceItem[],
+  filters: OccurrenceFilters,
+): OccurrenceItem[] {
+  const search = (filters.search ?? "").trim().toLowerCase();
+  const page = (filters.page ?? "").trim();
+  const section = (filters.section ?? "").trim();
+  const component = (filters.component ?? "").trim();
+  const status = filters.status ?? "all";
+
+  return items.filter((item) => {
+    if (status !== "all" && item.status !== status) return false;
+    if (page && item.page !== page) return false;
+    if (section && item.section !== section) return false;
+    if (component && item.component !== component) return false;
+
+    if (search) {
+      const haystack = [
+        item.occurrenceId,
+        item.name,
+        item.imageLogicalPath,
+        item.page,
+        item.section,
+        item.component,
+        item.publicUrl,
+        item.physicalPath,
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+
+    return true;
+  });
+}
+
+/**
+ * Orden estable: primero por página, después por sección, por componente y
+ * finalmente por identificador de aparición.
+ */
+export function sortOccurrences(items: OccurrenceItem[]): OccurrenceItem[] {
+  return [...items].sort((a, b) => {
+    const byPage = a.page.localeCompare(b.page, "es");
+    if (byPage !== 0) return byPage;
+    const bySection = a.section.localeCompare(b.section, "es");
+    if (bySection !== 0) return bySection;
+    const byComponent = a.component.localeCompare(b.component, "es");
+    if (byComponent !== 0) return byComponent;
+    return a.occurrenceId.localeCompare(b.occurrenceId, "es");
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Resumen de apariciones                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Números del encabezado de la pestaña de apariciones.
+ *
+ * - `physicalFiles`: archivos físicos que usa el sitio.
+ * - `totalOccurrences`: apariciones totales (una por lugar, sin agrupar).
+ * - `pagesWithImages`: páginas con al menos una imagen.
+ * - `sharedImages`: imágenes que se usan en más de un lugar del sitio.
+ * - `unusedImages`: imágenes de la biblioteca que no usa ninguna aparición.
+ */
+export function summarizeOccurrences(
+  occurrences: OccurrenceItem[],
+  files: InventoryItem[] = [],
+): OccurrenceSummary {
+  const physicalFiles = new Set<string>();
+  const pages = new Set<string>();
+  const appearancesByFile = new Map<string, number>();
+
+  for (const item of occurrences) {
+    physicalFiles.add(item.imageLogicalPath);
+    if (item.page) pages.add(item.page);
+    appearancesByFile.set(
+      item.imageLogicalPath,
+      (appearancesByFile.get(item.imageLogicalPath) ?? 0) + 1,
+    );
+  }
+
+  let sharedImages = 0;
+  for (const appearances of appearancesByFile.values()) {
+    if (appearances > 1) sharedImages += 1;
+  }
+
+  let unusedImages = 0;
+  for (const file of files) {
+    if (!physicalFiles.has(file.logicalPath)) unusedImages += 1;
+  }
+
+  return {
+    physicalFiles: physicalFiles.size,
+    totalOccurrences: occurrences.length,
+    pagesWithImages: pages.size,
+    sharedImages,
+    unusedImages,
+  };
+}
+
+/**
+ * Total de apariciones del sitio: es el número que muestra el contador de la
+ * navegación del panel.
+ */
+export function totalOccurrenceCount(
+  occurrences: OccurrenceItem[],
+): number {
+  return occurrences.length;
+}
+
+/**
+ * Cuenta cuántas apariciones usan cada archivo físico.
+ * La clave es la ruta lógica del archivo.
+ */
+export function countOccurrencesByFile(
+  occurrences: OccurrenceItem[],
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const item of occurrences) {
+    counts.set(item.imageLogicalPath, (counts.get(item.imageLogicalPath) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/* ------------------------------------------------------------------ */
+/* Opciones de los filtros de apariciones                              */
+/* ------------------------------------------------------------------ */
+
+/** Páginas con apariciones, sin repetir y ordenadas. */
+export function occurrencePageOptions(items: OccurrenceItem[]): string[] {
+  const set = new Set<string>();
+  for (const item of items) if (item.page) set.add(item.page);
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
+}
+
+/** Secciones con apariciones, sin repetir y ordenadas. */
+export function occurrenceSectionOptions(items: OccurrenceItem[]): string[] {
+  const set = new Set<string>();
+  for (const item of items) if (item.section) set.add(item.section);
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
+}
+
+/** Componentes con apariciones, sin repetir y ordenados. */
+export function occurrenceComponentOptions(items: OccurrenceItem[]): string[] {
+  const set = new Set<string>();
+  for (const item of items) if (item.component) set.add(item.component);
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
+}
+
+/* ------------------------------------------------------------------ */
+/* Borrado de archivos con apariciones                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Motivos por los que un archivo físico no se puede eliminar.
+ *
+ * Un archivo que usa alguna aparición viva no se puede borrar: primero hay
+ * que quitar esas apariciones. Los assets del paquete (`assets/`) están
+ * protegidos siempre.
+ */
+export function physicalFileDeleteBlockers(
+  item: InventoryItem,
+  occurrenceCount: number,
+): string[] {
+  const blockers = mediaDeleteBlockers(item);
+
+  if (occurrenceCount > 0) {
+    blockers.push(
+      `Este archivo lo usan ${occurrenceCount} ${
+        occurrenceCount === 1 ? "aparición" : "apariciones"
+      } del sitio. Quitá esas apariciones antes de eliminarlo.`,
+    );
+  }
+
+  return blockers;
+}
+
+/**
+ * Texto de la advertencia al quitar una aparición de una sección.
+ * Informa cuántas apariciones comparten el archivo, para que quede claro que
+ * las demás no se tocan.
+ */
+export function occurrenceRemovalWarning(
+  item: OccurrenceItem,
+): string {
+  const others = Math.max(0, item.sharedCount - 1);
+  if (!others) {
+    return "Esta aparición es la única que usa el archivo: al quitarla, el archivo físico se conserva igual.";
+  }
+  return `El archivo lo usan ${item.sharedCount} apariciones del sitio. Al quitar esta, las otras ${
+    others === 1 ? "apariencia" : "apariciones"
+  } siguen con la misma imagen y el archivo físico no se borra.`;
 }

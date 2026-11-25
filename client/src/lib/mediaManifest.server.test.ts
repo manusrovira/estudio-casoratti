@@ -17,6 +17,7 @@ import {
   matchEmittedAsset,
   readImageDimensions,
   scanImages,
+  scanOccurrences,
   type ScannedImage,
 } from "./mediaManifest.server";
 
@@ -420,5 +421,193 @@ describe("scanImages", () => {
     expect(images[0]?.origin).toBe("source");
     expect(images[0]?.width).toBe(320);
     expect(images[0]?.height).toBe(240);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Apariciones
+// -----------------------------------------------------------------------------
+
+describe("apariciones", () => {
+  function records() {
+    return buildMediaManifest({ repoRoot: findRepoRoot() }).occurrences;
+  }
+
+  function byId() {
+    return new Map(records().map((record) => [record.occurrenceId, record]));
+  }
+
+  it("detecta las 24 apariciones reales del sitio", () => {
+    // Diez apariciones fijas y las catorce del detalle de área, una por
+    // slug real: la auditoría del código real corrigió el total a 24.
+    const found = records();
+    expect(found).toHaveLength(24);
+    expect(found.filter((record) => record.occurrenceId.startsWith("area-detail-"))).toHaveLength(14);
+    expect(found.filter((record) => !record.occurrenceId.startsWith("area-detail-"))).toHaveLength(10);
+  });
+
+  it("usa un identificador propio y único para cada aparición", () => {
+    const ids = records().map((record) => record.occurrenceId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain("home-hero");
+    expect(ids).toContain("area-detail-familia");
+    // El mismo archivo físico, dos apariciones distintas.
+    expect(ids).toContain("home-split");
+    expect(ids).toContain("studio-intro");
+  });
+
+  it("resuelve el archivo físico de cada aparición", () => {
+    const found = byId();
+    expect(found.get("home-hero")?.imageLogicalPath).toBe("assets/casoratti-hero.jpg");
+    expect(found.get("home-split")?.imageLogicalPath).toBe("assets/equipo-reunion.jpg");
+    expect(found.get("studio-intro")?.imageLogicalPath).toBe("assets/equipo-reunion.jpg");
+    expect(found.get("studio-gallery-main")?.imageLogicalPath).toBe("assets/equipo-sala.jpg");
+    expect(found.get("studio-gallery-aside")?.imageLogicalPath).toBe("assets/equipo-pasillo.jpg");
+    expect(found.get("areas-intro")?.imageLogicalPath).toBe("assets/equipo-pasillo.jpg");
+    expect(found.get("values-intro")?.imageLogicalPath).toBe("assets/justice-scale.jpg");
+    expect(found.get("resources-intro")?.imageLogicalPath).toBe("assets/equipo-reunion.jpg");
+    expect(found.get("faq-intro")?.imageLogicalPath).toBe("assets/equipo-reunion.jpg");
+    expect(found.get("contact-intro")?.imageLogicalPath).toBe("assets/equipo-pasillo.jpg");
+  });
+
+  it("expande las 14 áreas con su slug real y el asset del área", () => {
+    const areas = records().filter((record) =>
+      record.occurrenceId.startsWith("area-detail-"),
+    );
+    expect(areas).toHaveLength(14);
+
+    const found = new Map(areas.map((record) => [record.occurrenceId, record]));
+    expect(found.get("area-detail-familia")?.section).toBe("Personas");
+    expect(found.get("area-detail-familia")?.imageLogicalPath).toBe("assets/equipo-reunion.jpg");
+    expect(found.get("area-detail-danos-y-seguros")?.imageLogicalPath).toBe(
+      "assets/equipo-audiencia-horizontal.jpg",
+    );
+    expect(found.get("area-detail-penal")?.imageLogicalPath).toBe(
+      "assets/equipo-audiencia-horizontal.jpg",
+    );
+    expect(found.get("area-detail-penal-economico")?.imageLogicalPath).toBe(
+      "assets/equipo-audiencia-horizontal.jpg",
+    );
+    expect(found.get("area-detail-sucesiones")?.imageLogicalPath).toBe("assets/equipo-sala.jpg");
+    expect(found.get("area-detail-societario-y-empresarial")?.imageLogicalPath).toBe(
+      "assets/equipo-sala.jpg",
+    );
+    expect(found.get("area-detail-civil-y-comercial")?.imageLogicalPath).toBe(
+      "assets/equipo-pasillo.jpg",
+    );
+    expect(found.get("area-detail-gestoria-automotor")?.imageLogicalPath).toBe(
+      "assets/equipo-pasillo.jpg",
+    );
+
+    for (const area of areas) {
+      expect(area.page).toBe("Detalle del área");
+      expect(area.component).toBe("AreaDetail");
+      expect(area.status).toBe("detected");
+      expect(area.file).toContain("client/src/pages/SitePages.tsx");
+      expect(area.line).toBeGreaterThan(0);
+    }
+  });
+
+  it("ubica cada aparición en el lugar del sitio donde se usa", () => {
+    for (const record of records()) {
+      expect(record.status).toBe("detected");
+      expect(record.file).toBe("client/src/pages/SitePages.tsx");
+      expect(record.line).toBeGreaterThan(0);
+      expect(record.page.length).toBeGreaterThan(0);
+      expect(record.section.length).toBeGreaterThan(0);
+      expect(record.component.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("no inventa la aparición que nadie usa", () => {
+    const root = makeTempDir();
+    writeFile(
+      root,
+      path.join("client", "src", "data", "mediaOccurrences.ts"),
+      [
+        'import foto from "@/assets/prueba.jpg";',
+        'export const AREA_OCCURRENCE_PAGE = "Detalle del área";',
+        'export const AREA_OCCURRENCE_COMPONENT = "AreaDetail";',
+        "const staticOccurrences: Record<string, MediaOccurrence> = {",
+        '  "usada": {',
+        '    id: "usada",',
+        "    image: foto,",
+        '    page: "Inicio",',
+        '    section: "Portada",',
+        '    component: "Home",',
+        '    alt: "Una foto",',
+        "  },",
+        '  "sin-uso": {',
+        '    id: "sin-uso",',
+        "    image: foto,",
+        '    page: "Inicio",',
+        '    section: "Portada",',
+        '    component: "Home",',
+        '    alt: "Otra foto",',
+        "  },",
+        "};",
+      ].join("\n"),
+    );
+    writeFile(
+      root,
+      path.join("client", "src", "pages", "Demo.tsx"),
+      [
+        'import foto from "@/assets/prueba.jpg";',
+        'export const Demo = () => <MediaImg occurrence="usada" src={foto} alt="Una foto" />;',
+      ].join("\n"),
+    );
+
+    const found = scanOccurrences({ repoRoot: root });
+    expect(found).toHaveLength(2);
+
+    const usada = found.find((record) => record.occurrenceId === "usada");
+    const sinUso = found.find((record) => record.occurrenceId === "sin-uso");
+    expect(usada?.status).toBe("detected");
+    expect(usada?.file).toBe("client/src/pages/Demo.tsx");
+    expect(usada?.line).toBe(2);
+    expect(usada?.imageLogicalPath).toBe("assets/prueba.jpg");
+
+    // La que nadie usa queda pendiente y sin ubicación inventada.
+    expect(sinUso?.status).toBe("pending");
+    expect(sinUso?.file).toBe("");
+    expect(sinUso?.line).toBe(0);
+  });
+
+  it("no cuenta el mapa de assets como sitio de uso", () => {
+    // `mediaAssets.ts` traduce asset ↔ ruta lógica: no renderiza ninguna imagen.
+    const manifest = buildMediaManifest({ repoRoot: findRepoRoot() });
+    for (const entry of manifest.entries) {
+      for (const reference of entry.references) {
+        expect(reference.file).not.toContain("mediaAssets.ts");
+      }
+    }
+  });
+
+  it("el manifiesto emitido sigue siendo válido", () => {
+    const root = findRepoRoot();
+    const manifest = buildMediaManifest({
+      repoRoot: root,
+      emitted: [
+        {
+          fileName: "assets/casoratti-hero-D1x2y3z.jpg",
+          name: "casoratti-hero.jpg",
+          originalFileNames: ["src/assets/casoratti-hero.jpg"],
+        },
+      ],
+    });
+
+    expect(manifest.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // Los archivos físicos se mantienen: ocho imágenes reales del repositorio.
+    expect(manifest.entries).toHaveLength(8);
+    expect(manifest.occurrences).toHaveLength(24);
+
+    const hero = manifest.entries.find(
+      (entry) => entry.logicalPath === "assets/casoratti-hero.jpg",
+    );
+    expect(hero?.publicPath).toBe("/assets/casoratti-hero-D1x2y3z.jpg");
+    expect(
+      manifest.occurrences.find((record) => record.occurrenceId === "home-hero")
+        ?.imageLogicalPath,
+    ).toBe("assets/casoratti-hero.jpg");
   });
 });

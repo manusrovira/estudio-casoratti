@@ -4,19 +4,40 @@ import {
   formatMediaBytes,
   type MediaManifest,
 } from "@/lib/mediaManifest";
-import { listFolders, listMedia, trashMedia, type MediaRow } from "./media-service";
+import {
+  listFolders,
+  listMedia,
+  listOccurrenceOverrides,
+  setOccurrenceHidden,
+  trashMedia,
+  type MediaOccurrenceRow,
+  type MediaRow,
+} from "./media-service";
 import {
   MEDIA_USAGE_LABELS,
+  OCCURRENCE_STATUS_LABELS,
+  countOccurrencesByFile,
   filterMediaInventory,
-  mediaDeleteBlockers,
+  filterOccurrences,
   mediaFormatOptions,
   mediaFolderOptions,
   mediaUsageWarning,
   mergeMediaInventory,
+  mergeOccurrenceInventory,
+  occurrenceComponentOptions,
+  occurrencePageOptions,
+  occurrenceRemovalWarning,
+  occurrenceSectionOptions,
+  physicalFileDeleteBlockers,
+  sortOccurrences,
   summarizeMediaInventory,
+  summarizeOccurrences,
+  totalOccurrenceCount,
   withCacheVersion,
   type InventoryItem,
   type MediaUsageStatus,
+  type OccurrenceItem,
+  type OccurrenceStatus,
 } from "./media-inventory";
 import { ImageEditorModal } from "./ImageEditorModal";
 import { MediaActivityPanel } from "./MediaActivityPanel";
@@ -27,13 +48,23 @@ import { MediaUploadPanel } from "./MediaUploadPanel";
 /**
  * Biblioteca de imágenes del estudio.
  *
- * El inventario junta dos fuentes reales: el manifiesto que se genera en el
- * build (los assets compilados y sus referencias en el código) y las filas de
- * `site_media` (los objetos del bucket `site-media`). No hay datos
- * simulados: si el manifiesto todavía no está, se lo dice.
+ * El módulo administra **apariciones**: cada lugar del sitio donde se usa una
+ * imagen. Cada aparición se puede editar, reemplazar o quitar sin tocar las
+ * demás, aunque compartan el mismo archivo.
+ *
+ * Las pestañas son:
+ *
+ *  - **Apariciones**: una tarjeta por lugar del sitio (sin agrupar).
+ *  - **Archivos**: la biblioteca física, con cuántas apariciones usa cada uno.
+ *  - **Papelera** y **Actividad**: lo mismo de siempre.
+ *
+ * Los datos vienen de dos fuentes reales: el manifiesto que se genera en el
+ * build (los assets compilados y sus apariciones en el código) y las filas de
+ * `site_media` (los objetos del bucket `site-media`). No hay datos simulados:
+ * si el manifiesto todavía no está, se lo dice.
  */
 
-type Tab = "inventario" | "papelera" | "actividad";
+type Tab = "apariciones" | "archivos" | "papelera" | "actividad";
 type View = "grid" | "list";
 type Feedback = { kind: "ok" | "error"; text: string };
 
@@ -45,6 +76,16 @@ const STATUS_FILTERS: { value: MediaUsageStatus | "all"; label: string }[] = [
   { value: "trashed", label: "En papelera" },
 ];
 
+const OCCURRENCE_STATUS_FILTERS: {
+  value: OccurrenceStatus | "all";
+  label: string;
+}[] = [
+  { value: "all", label: "Todas" },
+  { value: "unchanged", label: "Sin cambios" },
+  { value: "replaced", label: "Reemplazada" },
+  { value: "hidden", label: "Oculta" },
+];
+
 const dateFormatter = new Intl.DateTimeFormat("es-AR", { dateStyle: "medium" });
 
 function formatDate(value: string | null | undefined): string {
@@ -54,9 +95,9 @@ function formatDate(value: string | null | undefined): string {
   return dateFormatter.format(parsed);
 }
 
-function dimensionsOf(item: InventoryItem): string {
-  if (!item.width || !item.height) return "—";
-  return `${item.width}×${item.height} px`;
+function dimensionsOf(width: number | null, height: number | null): string {
+  if (!width || !height) return "—";
+  return `${width}×${height} px`;
 }
 
 export function ImageLibraryModule() {
@@ -65,6 +106,7 @@ export function ImageLibraryModule() {
   const [manifest, setManifest] = useState<MediaManifest | null>(null);
   const [manifestAvailable, setManifestAvailable] = useState<boolean | null>(null);
   const [rows, setRows] = useState<MediaRow[]>([]);
+  const [occurrenceRows, setOccurrenceRows] = useState<MediaOccurrenceRow[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -77,13 +119,26 @@ export function ImageLibraryModule() {
   const [folder, setFolder] = useState("");
   const [status, setStatus] = useState<MediaUsageStatus | "all">("all");
   const [view, setView] = useState<View>("grid");
-  const [tab, setTab] = useState<Tab>("inventario");
+  const [tab, setTab] = useState<Tab>("apariciones");
+
+  const [occSearch, setOccSearch] = useState("");
+  const [occPage, setOccPage] = useState("");
+  const [occSection, setOccSection] = useState("");
+  const [occComponent, setOccComponent] = useState("");
+  const [occStatus, setOccStatus] = useState<OccurrenceStatus | "all">("all");
 
   /* ---------------------------------------------------------- selección */
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [editorKey, setEditorKey] = useState<string | null>(null);
   const [metadataKey, setMetadataKey] = useState<string | null>(null);
+  const [occurrenceEditor, setOccurrenceEditor] = useState<{
+    occurrenceId: string;
+    focus: "edit" | "replace";
+  } | null>(null);
+  const [removingOccurrenceId, setRemovingOccurrenceId] = useState<string | null>(
+    null,
+  );
   const [uploadOpen, setUploadOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -96,12 +151,14 @@ export function ImageLibraryModule() {
     setLoading(true);
     setError(null);
     try {
-      const [mediaRows, folderList] = await Promise.all([
+      const [mediaRows, folderList, occurrenceList] = await Promise.all([
         listMedia(),
         listFolders(),
+        listOccurrenceOverrides(),
       ]);
       setRows(mediaRows);
       setFolders(folderList);
+      setOccurrenceRows(occurrenceList);
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -132,7 +189,7 @@ export function ImageLibraryModule() {
     await loadDatabase();
   }, [loadDatabase]);
 
-  /* --------------------------------------------------------- inventario */
+  /* ---------------------------------------------------------- inventario */
 
   const items = useMemo(
     () => mergeMediaInventory(manifest, rows),
@@ -157,6 +214,66 @@ export function ImageLibraryModule() {
     [rows],
   );
 
+  /* --------------------------------------------------------- apariciones */
+
+  const occurrences = useMemo(
+    () => mergeOccurrenceInventory(manifest, rows, occurrenceRows),
+    [manifest, rows, occurrenceRows],
+  );
+
+  const orderedOccurrences = useMemo(
+    () => sortOccurrences(occurrences),
+    [occurrences],
+  );
+
+  const visibleOccurrences = useMemo(
+    () =>
+      filterOccurrences(orderedOccurrences, {
+        search: occSearch,
+        page: occPage,
+        section: occSection,
+        component: occComponent,
+        status: occStatus,
+      }),
+    [
+      orderedOccurrences,
+      occSearch,
+      occPage,
+      occSection,
+      occComponent,
+      occStatus,
+    ],
+  );
+
+  const occurrenceSummary = useMemo(
+    () => summarizeOccurrences(occurrences, items),
+    [occurrences, items],
+  );
+
+  const occurrenceCount = useMemo(
+    () => totalOccurrenceCount(occurrences),
+    [occurrences],
+  );
+
+  const occurrencePages = useMemo(
+    () => occurrencePageOptions(occurrences),
+    [occurrences],
+  );
+  const occurrenceSections = useMemo(
+    () => occurrenceSectionOptions(occurrences),
+    [occurrences],
+  );
+  const occurrenceComponents = useMemo(
+    () => occurrenceComponentOptions(occurrences),
+    [occurrences],
+  );
+
+  /* Cuántas apariciones usa cada archivo físico. */
+  const occurrencesByFile = useMemo(
+    () => countOccurrencesByFile(occurrences),
+    [occurrences],
+  );
+
   const selected = useMemo(
     () => items.find(item => item.key === selectedKey) ?? null,
     [items, selectedKey],
@@ -168,6 +285,30 @@ export function ImageLibraryModule() {
   const metadataItem = useMemo(
     () => items.find(item => item.key === metadataKey) ?? null,
     [items, metadataKey],
+  );
+
+  const occurrenceBeingEdited = useMemo(
+    () =>
+      occurrences.find(item => item.occurrenceId === occurrenceEditor?.occurrenceId) ??
+      null,
+    [occurrences, occurrenceEditor],
+  );
+
+  /** El archivo físico que usa la aparición que se está editando. */
+  const occurrenceEditorItem = useMemo(
+    () =>
+      occurrenceBeingEdited
+        ? (items.find(
+            item => item.logicalPath === occurrenceBeingEdited.imageLogicalPath,
+          ) ?? null)
+        : null,
+    [items, occurrenceBeingEdited],
+  );
+
+  const occurrenceBeingRemoved = useMemo(
+    () =>
+      occurrences.find(item => item.occurrenceId === removingOccurrenceId) ?? null,
+    [occurrences, removingOccurrenceId],
   );
 
   /* ------------------------------------------------------------- ações */
@@ -189,7 +330,10 @@ export function ImageLibraryModule() {
         document.body.removeChild(area);
       }
       setCopied(key);
-      window.setTimeout(() => setCopied((current) => (current === key ? null : current)), 2200);
+      window.setTimeout(
+        () => setCopied(current => (current === key ? null : current)),
+        2200,
+      );
     } catch {
       setFeedback({
         kind: "error",
@@ -226,14 +370,72 @@ export function ImageLibraryModule() {
     [refresh],
   );
 
+  /**
+   * Quita la imagen de **una sola aparición**. El archivo físico no se borra y
+   * las demás apariciones que lo usan siguen igual.
+   */
+  const removeOccurrence = useCallback(
+    async (occurrence: OccurrenceItem) => {
+      setBusy(true);
+      const result = await setOccurrenceHidden(occurrence.occurrenceId, true, {
+        name: occurrence.name,
+        format: occurrence.format,
+        bytes: occurrence.bytes,
+        width: occurrence.width,
+        height: occurrence.height,
+      });
+      setBusy(false);
+      if (!result.ok) {
+        setFeedback({ kind: "error", text: result.error });
+        return;
+      }
+      setFeedback({
+        kind: "ok",
+        text: `Se quitó la imagen de «${occurrence.page}». El archivo no se borró y las demás apariciones siguen igual.`,
+      });
+      setRemovingOccurrenceId(null);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  /** Vuelve a mostrar la imagen original en una aparición oculta. */
+  const restoreOccurrence = useCallback(
+    async (occurrence: OccurrenceItem) => {
+      setBusy(true);
+      const result = await setOccurrenceHidden(occurrence.occurrenceId, false);
+      setBusy(false);
+      if (!result.ok) {
+        setFeedback({ kind: "error", text: result.error });
+        return;
+      }
+      setFeedback({
+        kind: "ok",
+        text: `La imagen volvió a mostrarse en «${occurrence.page}».`,
+      });
+      await refresh();
+    },
+    [refresh],
+  );
+
   const previewUrl = useCallback(
     (item: InventoryItem) => withCacheVersion(item.publicUrl, cacheVersion),
     [cacheVersion],
   );
 
+  const previewOccurrenceUrl = useCallback(
+    (item: OccurrenceItem) => withCacheVersion(item.publicUrl, cacheVersion),
+    [cacheVersion],
+  );
+
   /* ----------------------------------------------------------- render */
 
-  const blockers = selected ? mediaDeleteBlockers(selected) : [];
+  const selectedOccurrences = selected
+    ? (occurrencesByFile.get(selected.logicalPath) ?? 0)
+    : 0;
+  const blockers = selected
+    ? physicalFileDeleteBlockers(selected, selectedOccurrences)
+    : [];
   const usageWarning = selected ? mediaUsageWarning(selected) : null;
 
   return (
@@ -241,10 +443,17 @@ export function ImageLibraryModule() {
       <div className="admin-media-tabs">
         <button
           type="button"
-          className={tab === "inventario" ? "admin-media-tab active" : "admin-media-tab"}
-          onClick={() => setTab("inventario")}
+          className={tab === "apariciones" ? "admin-media-tab active" : "admin-media-tab"}
+          onClick={() => setTab("apariciones")}
         >
-          Inventario
+          Apariciones{occurrenceCount ? ` (${occurrenceCount})` : ""}
+        </button>
+        <button
+          type="button"
+          className={tab === "archivos" ? "admin-media-tab active" : "admin-media-tab"}
+          onClick={() => setTab("archivos")}
+        >
+          Archivos
         </button>
         <button
           type="button"
@@ -262,15 +471,352 @@ export function ImageLibraryModule() {
         </button>
       </div>
 
-      {tab === "inventario" && (
+      {/* ------------------------------------------------------ apariciones */}
+      {tab === "apariciones" && (
         <>
           <div className="admin-card">
             <div className="admin-card-head">
               <div>
-                <h2 className="admin-card-title">Biblioteca de imágenes</h2>
+                <h2 className="admin-card-title">Apariciones de imágenes</h2>
                 <p className="admin-card-sub">
-                  Imágenes del sitio y del banco de imágenes: dónde están, dónde
-                  se usan y cuánto ocupan.
+                  Cada lugar del sitio donde se usa una imagen. Editar, reemplazar
+                  o quitar una aparición no cambia las demás, aunque compartan el
+                  mismo archivo.
+                </p>
+              </div>
+            </div>
+
+            <div className="admin-card-body">
+              <div className="admin-media-kpis">
+                <div className="admin-media-kpi">
+                  <span className="admin-media-kpi-label">Apariciones</span>
+                  <span className="admin-media-kpi-value">
+                    {occurrenceSummary.totalOccurrences}
+                  </span>
+                  <span className="admin-media-kpi-hint">
+                    Lugares del sitio con una imagen
+                  </span>
+                </div>
+                <div className="admin-media-kpi admin-media-kpi-accent">
+                  <span className="admin-media-kpi-label">Archivos físicos</span>
+                  <span className="admin-media-kpi-value">
+                    {occurrenceSummary.physicalFiles}
+                  </span>
+                  <span className="admin-media-kpi-hint">
+                    Imágenes distintas que usa el sitio
+                  </span>
+                </div>
+                <div className="admin-media-kpi">
+                  <span className="admin-media-kpi-label">Páginas con imágenes</span>
+                  <span className="admin-media-kpi-value">
+                    {occurrenceSummary.pagesWithImages}
+                  </span>
+                  <span className="admin-media-kpi-hint">
+                    Páginas distintas del sitio
+                  </span>
+                </div>
+                <div className="admin-media-kpi">
+                  <span className="admin-media-kpi-label">Usadas en varias secciones</span>
+                  <span className="admin-media-kpi-value">
+                    {occurrenceSummary.sharedImages}
+                  </span>
+                  <span className="admin-media-kpi-hint">
+                    La misma imagen en más de un lugar
+                  </span>
+                </div>
+                <div className="admin-media-kpi admin-media-kpi-strong">
+                  <span className="admin-media-kpi-label">Sin referencias</span>
+                  <span className="admin-media-kpi-value">
+                    {occurrenceSummary.unusedImages}
+                  </span>
+                  <span className="admin-media-kpi-hint">
+                    Archivos que no usa ninguna aparición
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {feedback && (
+            <div className={feedback.kind === "ok" ? "admin-ok" : "admin-error"}>
+              {feedback.text}
+            </div>
+          )}
+
+          {error && <div className="admin-error">{error}</div>}
+
+          {manifestAvailable === false && (
+            <div className="admin-info">
+              El inventario se genera en el build; todavía no está disponible.
+              Se muestran los medios guardados en el banco de imágenes.
+            </div>
+          )}
+
+          <div className="admin-card">
+            <div className="admin-media-filters">
+              <div className="filter-field admin-media-search">
+                <label htmlFor="occurrence-search">Buscar</label>
+                <input
+                  id="occurrence-search"
+                  className="admin-input"
+                  type="search"
+                  placeholder="Archivo, página, sección…"
+                  value={occSearch}
+                  onChange={event => setOccSearch(event.target.value)}
+                />
+              </div>
+
+              <div className="filter-field">
+                <label htmlFor="occurrence-filter-page">Página</label>
+                <select
+                  id="occurrence-filter-page"
+                  className="admin-select"
+                  value={occPage}
+                  onChange={event => setOccPage(event.target.value)}
+                >
+                  <option value="">Todas</option>
+                  {occurrencePages.map(option => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="filter-field">
+                <label htmlFor="occurrence-filter-section">Sección</label>
+                <select
+                  id="occurrence-filter-section"
+                  className="admin-select"
+                  value={occSection}
+                  onChange={event => setOccSection(event.target.value)}
+                >
+                  <option value="">Todas</option>
+                  {occurrenceSections.map(option => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="filter-field">
+                <label htmlFor="occurrence-filter-component">Componente</label>
+                <select
+                  id="occurrence-filter-component"
+                  className="admin-select"
+                  value={occComponent}
+                  onChange={event => setOccComponent(event.target.value)}
+                >
+                  <option value="">Todos</option>
+                  {occurrenceComponents.map(option => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="filter-field">
+                <label htmlFor="occurrence-filter-status">Estado</label>
+                <select
+                  id="occurrence-filter-status"
+                  className="admin-select"
+                  value={occStatus}
+                  onChange={event =>
+                    setOccStatus(event.target.value as OccurrenceStatus | "all")
+                  }
+                >
+                  {OCCURRENCE_STATUS_FILTERS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="admin-card-body">
+              {loading && <div className="admin-empty">Cargando las apariciones…</div>}
+
+              {!loading && !visibleOccurrences.length && (
+                <div className="admin-empty">
+                  <strong>No hay apariciones que coincidan</strong>
+                  {occurrences.length
+                    ? "Probá con otro buscador o cambiá los filtros."
+                    : "Todavía no se detectaron apariciones: se generan en el build del sitio."}
+                </div>
+              )}
+
+              {!loading && visibleOccurrences.length > 0 && (
+                <div className="admin-media-grid">
+                  {visibleOccurrences.map(occurrence => (
+                    <article
+                      className="admin-media-card admin-occurrence-card"
+                      key={occurrence.key}
+                    >
+                      <div className="admin-media-thumb">
+                        {occurrence.publicUrl ? (
+                          <img
+                            src={previewOccurrenceUrl(occurrence)}
+                            alt={occurrence.metadata.altText ?? occurrence.name}
+                            loading="lazy"
+                          />
+                        ) : (
+                          <span className="admin-media-thumb-empty">
+                            Sin imagen en esta sección
+                          </span>
+                        )}
+                      </div>
+                      <div className="admin-media-card-body">
+                        <h3 className="admin-media-name">{occurrence.name}</h3>
+
+                        <p className="admin-occurrence-where">
+                          <span className="admin-occurrence-tag">
+                            {occurrence.page || "Sin página"}
+                          </span>
+                          <span className="admin-occurrence-tag">
+                            {occurrence.section || "Sin sección"}
+                          </span>
+                          <span className="admin-occurrence-tag">
+                            {occurrence.component || "Sin componente"}
+                          </span>
+                        </p>
+
+                        <dl className="admin-media-meta">
+                          <dt>Estado</dt>
+                          <dd>
+                            <span
+                              className={`admin-media-status admin-media-status-${occurrence.status}`}
+                            >
+                              {OCCURRENCE_STATUS_LABELS[occurrence.status]}
+                            </span>
+                          </dd>
+                          <dt>Medidas</dt>
+                          <dd>
+                            {dimensionsOf(occurrence.width, occurrence.height)}
+                          </dd>
+                          <dt>Peso</dt>
+                          <dd>{formatMediaBytes(occurrence.bytes)}</dd>
+                          <dt>Formato</dt>
+                          <dd>{occurrence.format.toUpperCase()}</dd>
+                          <dt>Apariciones del archivo</dt>
+                          <dd>{occurrence.sharedCount}</dd>
+                          <dt>Modificada</dt>
+                          <dd>{formatDate(occurrence.modifiedAt)}</dd>
+                        </dl>
+
+                        <p className="admin-media-path" title="Ruta física">
+                          {occurrence.physicalPath}
+                        </p>
+                        <p className="admin-media-path admin-media-mono" title="URL que usa la página">
+                          {occurrence.publicUrl || "Sin imagen en esta sección"}
+                        </p>
+
+                        <div className="admin-media-actions">
+                          <button
+                            type="button"
+                            className="admin-button admin-button-ghost admin-button-small"
+                            onClick={() => {
+                              setOccurrenceEditor({
+                                occurrenceId: occurrence.occurrenceId,
+                                focus: "edit",
+                              });
+                              setFeedback(null);
+                            }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            className="admin-button admin-button-copper admin-button-small"
+                            onClick={() => {
+                              setOccurrenceEditor({
+                                occurrenceId: occurrence.occurrenceId,
+                                focus: "replace",
+                              });
+                              setFeedback(null);
+                            }}
+                          >
+                            Reemplazar
+                          </button>
+                          {occurrence.status === "hidden" ? (
+                            <button
+                              type="button"
+                              className="admin-button admin-button-ghost admin-button-small"
+                              disabled={busy}
+                              onClick={() => void restoreOccurrence(occurrence)}
+                            >
+                              Volver a mostrar
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="admin-button admin-button-danger admin-button-small"
+                              onClick={() => {
+                                setRemovingOccurrenceId(occurrence.occurrenceId);
+                                setFeedback(null);
+                              }}
+                            >
+                              Eliminar aparición
+                            </button>
+                          )}
+                        </div>
+
+                        {removingOccurrenceId === occurrence.occurrenceId && (
+                          <div className="admin-media-warning">
+                            <strong>{occurrenceRemovalWarning(occurrence)}</strong>
+                            <ul>
+                              <li>
+                                La imagen desaparece de «{occurrence.page}»
+                                {occurrence.section ? ` · ${occurrence.section}` : ""}.
+                              </li>
+                              <li>El archivo físico no se borra.</li>
+                              <li>
+                                Las otras apariciones del mismo archivo siguen
+                                mostrando la imagen de siempre.
+                              </li>
+                            </ul>
+                            <div className="admin-row" style={{ marginTop: ".8rem" }}>
+                              <button
+                                type="button"
+                                className="admin-button admin-button-danger"
+                                disabled={busy}
+                                onClick={() => void removeOccurrence(occurrence)}
+                              >
+                                {busy ? "Quitando…" : "Sí, quitar de esta sección"}
+                              </button>
+                              <button
+                                type="button"
+                                className="admin-button admin-button-ghost"
+                                onClick={() => setRemovingOccurrenceId(null)}
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* --------------------------------------------------------- archivos */}
+      {tab === "archivos" && (
+        <>
+          <div className="admin-card">
+            <div className="admin-card-head">
+              <div>
+                <h2 className="admin-card-title">Archivos de la biblioteca</h2>
+                <p className="admin-card-sub">
+                  La biblioteca física: cada archivo del sitio y del banco de
+                  imágenes, con la cantidad de apariciones que lo usan. Un archivo
+                  con apariciones vivas no se puede eliminar.
                 </p>
               </div>
               <button
@@ -459,7 +1005,7 @@ export function ImageLibraryModule() {
                           <dt>Peso</dt>
                           <dd>{formatMediaBytes(item.bytes)}</dd>
                           <dt>Medidas</dt>
-                          <dd>{dimensionsOf(item)}</dd>
+                          <dd>{dimensionsOf(item.width, item.height)}</dd>
                           <dt>Estado</dt>
                           <dd>
                             <span
@@ -468,6 +1014,8 @@ export function ImageLibraryModule() {
                               {MEDIA_USAGE_LABELS[item.status]}
                             </span>
                           </dd>
+                          <dt>Apariciones</dt>
+                          <dd>{occurrencesByFile.get(item.logicalPath) ?? 0}</dd>
                           <dt>Referencias</dt>
                           <dd>{item.referenceCount}</dd>
                           <dt>Modificada</dt>
@@ -506,7 +1054,7 @@ export function ImageLibraryModule() {
                         <th>Ruta</th>
                         <th>Modificada</th>
                         <th>Estado</th>
-                        <th>Referencias</th>
+                        <th>Apariciones</th>
                         <th>Acciones</th>
                       </tr>
                     </thead>
@@ -528,7 +1076,9 @@ export function ImageLibraryModule() {
                           <td className="cell-strong">{item.name}</td>
                           <td className="cell-muted">{item.format.toUpperCase()}</td>
                           <td className="cell-muted">{formatMediaBytes(item.bytes)}</td>
-                          <td className="cell-muted">{dimensionsOf(item)}</td>
+                          <td className="cell-muted">
+                            {dimensionsOf(item.width, item.height)}
+                          </td>
                           <td className="cell-muted admin-media-mono">
                             {item.physicalPath}
                           </td>
@@ -540,7 +1090,9 @@ export function ImageLibraryModule() {
                               {MEDIA_USAGE_LABELS[item.status]}
                             </span>
                           </td>
-                          <td className="cell-muted">{item.referenceCount}</td>
+                          <td className="cell-muted">
+                            {occurrencesByFile.get(item.logicalPath) ?? 0}
+                          </td>
                           <td>
                             <div className="cell-actions">
                               <button
@@ -706,7 +1258,7 @@ export function ImageLibraryModule() {
                     <dt>Peso</dt>
                     <dd>{formatMediaBytes(selected.bytes)}</dd>
                     <dt>Medidas</dt>
-                    <dd>{dimensionsOf(selected)}</dd>
+                    <dd>{dimensionsOf(selected.width, selected.height)}</dd>
                     <dt>Modificada</dt>
                     <dd>{formatDate(selected.modifiedAt)}</dd>
                     <dt>Estado</dt>
@@ -717,6 +1269,8 @@ export function ImageLibraryModule() {
                         {MEDIA_USAGE_LABELS[selected.status]}
                       </span>
                     </dd>
+                    <dt>Apariciones</dt>
+                    <dd>{selectedOccurrences}</dd>
                     <dt>Referencias</dt>
                     <dd>{selected.referenceCount}</dd>
                     <dt>Origen</dt>
@@ -731,6 +1285,14 @@ export function ImageLibraryModule() {
 
               <div className="admin-media-detail-block">
                 <h3>Dónde se usa</h3>
+                {selectedOccurrences > 0 ? (
+                  <p className="admin-media-hint">
+                    Este archivo aparece en {selectedOccurrences}{" "}
+                    {selectedOccurrences === 1 ? "aparición" : "apariciones"} del
+                    sitio. Para cambiarlo en un solo lugar, usá la pestaña
+                    Apariciones.
+                  </p>
+                ) : null}
                 {selected.referenceCount ? (
                   <div className="admin-media-refs">
                     {selected.references.map((reference, index) => (
@@ -788,7 +1350,7 @@ export function ImageLibraryModule() {
                   disabled={blockers.length > 0}
                   onClick={() => setConfirmDelete(true)}
                 >
-                  Eliminar imagen
+                  Eliminar archivo físico
                 </button>
                 {blockers.length > 0 && (
                   <span className="cell-muted">{blockers[0]}</span>
@@ -863,6 +1425,20 @@ export function ImageLibraryModule() {
           item={editorItem}
           folders={folders}
           onClose={() => setEditorKey(null)}
+          onSaved={message => {
+            setFeedback({ kind: "ok", text: message });
+            void refresh();
+          }}
+        />
+      )}
+
+      {occurrenceBeingEdited && occurrenceEditorItem && (
+        <ImageEditorModal
+          item={occurrenceEditorItem}
+          folders={folders}
+          occurrence={occurrenceBeingEdited}
+          focus={occurrenceEditor?.focus ?? "edit"}
+          onClose={() => setOccurrenceEditor(null)}
           onSaved={message => {
             setFeedback({ kind: "ok", text: message });
             void refresh();

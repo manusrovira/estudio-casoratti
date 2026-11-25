@@ -68,16 +68,34 @@ administración. **El sitio público no cambió**: es aditivo.
   otros dispositivos y deja la operación registrada en la bitácora — **sin** guardar
   ni registrar jamás la contraseña.
 - **Biblioteca de imágenes** (`/panel/imagenes`): administrador integral de todos los
-  recursos gráficos del sitio. Inventario real generado en el build (8 imágenes del
-  proyecto con ruta física, URL pública, formato, peso, dimensiones, fecha y
-  referencias en el código), carga por arrastre o selección múltiple con vista
-  previa, progreso y cancelación, detección de duplicados que no sobrescribe sin
-  confirmación, editor visual con recorte (libre, 1:1, 16:9, 4:3, 3:4, 9:16),
-  encuadre (marco, radio, borde, `cover`/`contain`/`fill`) y vista previa contextual,
-  reemplazo conservando la copia de la versión original, eliminación con aviso
-  cuando la imagen está en uso, papelera con restauración y borrado definitivo con
-  doble confirmación, y edición de metadatos (ALT, título, descripción, categoría,
-  etiquetas).
+  recursos gráficos del sitio, organizado por **apariciones**: cada lugar del sitio
+  donde se usa una imagen es un registro independiente, con su propia página,
+  sección y componente, y se edita, reemplaza o quita **sin afectar a las demás
+  apariciones** del mismo archivo. Incluye el inventario real generado en el build
+  (8 archivos físicos y 24 apariciones con ruta física, URL pública, formato, peso,
+  dimensiones, fecha y referencias en el código), carga por arrastre o selección
+  múltiple con vista previa, progreso y cancelación, detección de duplicados que
+  no sobrescribe sin confirmación, editor visual con recorte (libre, 1:1, 16:9, 4:3,
+  3:4, 9:16), encuadre (marco, radio, borde, `cover`/`contain`/`fill`) y vista previa
+  contextual, reemplazo con copia de la versión original, eliminación de una
+  aparición (que no borra el archivo), borrado del archivo físico bloqueado
+  mientras tenga apariciones vivas, papelera con restauración y borrado definitivo
+  con doble confirmación, y metadatos (ALT, título, descripción, categoría,
+  etiquetas). La navegación del panel muestra el total: `Imágenes (24)`.
+
+### Apariciones y archivos físicos: dos conceptos distintos
+
+| | Archivos físicos | Apariciones |
+|---|---|---|
+| Qué es | el recurso gráfico como archivo | cada lugar del sitio donde se usa |
+| Cuántos | 8 (6 en uso, 2 sin referencias) | 24 |
+| Identificador | ruta lógica (`assets/equipo-reunion.jpg`) | id de aparición (`studio-intro`, `area-detail-familia`, …) |
+| Dónde se administra | pestaña **Archivos** | pestaña **Apariciones** (la principal) |
+| Qué pasa al editarlo | cambia el recurso para todos sus usos | cambia **sólo** ese lugar del sitio |
+
+Las 10 apariciones estáticas y las 14 dinámicas de área salen del código real:
+las detecta el escáner del build, que cruza el registro de apariciones con los
+sitios de render y expande las áreas contra los slugs reales de `practiceAreas`.
 
 ### Dónde viven las imágenes administradas
 
@@ -90,14 +108,15 @@ sobrescribir desde el panel. Por eso el gestor trabaja sobre el bucket
 |---|---|---|
 | Asset compilado | `client/src/assets/` | Vite lo emite con hash (`/assets/hero-zHES6NpP.jpg`) |
 | Imagen cargada | bucket `site-media` (público) | `…/storage/v1/object/public/site-media/<ruta>` |
-| Reemplazo | bucket `site-media`, misma ruta lógica | el sitio lo resuelve con `useMediaSrc` |
+| Reemplazo de una aparición | bucket `site-media`, con el id de la aparición | el sitio lo resuelve con `useMediaSrc(occurrenceId, …)` |
+| Reemplazo del archivo | bucket `site-media`, misma ruta lógica | el sitio lo resuelve con `useMediaSrc(null, rutaLógica, …)` |
 
 El manifiesto (`media-manifest.json`, generado en cada build por un plugin de Vite)
-es el inventario: rutas lógicas, rutas físicas, URL pública real y las referencias
-detectadas en el código. Cuando el administrador reemplaza una imagen del bundle, la
-versión nueva queda en Storage **con la misma ruta lógica**, y el sitio público la
-resuelve solo; si no hay reemplazo, sigue usando el asset compilado y **el diseño no
-cambia nunca**.
+es el inventario: archivos físicos, apariciones, rutas lógicas, rutas físicas, URL
+pública real y las referencias detectadas en el código. La resolución tiene dos
+nivios —primero el override de la **aparición**, después el del **archivo**— y
+si no hay ninguno se sigue usando el asset compilado: **el diseño no cambia
+nunca**.
 
 ### Puesta en marcha
 

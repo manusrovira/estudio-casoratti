@@ -196,7 +196,7 @@ Rutas bajo `/panel`, con marco propio (sidebar + topbar) y carga diferida del ch
 |---|---|---|
 | `/panel` | **Dashboard** | 8 KPIs (consultas totales, nuevas, abiertas, clientes, clientes activos, expedientes abiertos, usuarios, notificaciones sin leer) + consultas recientes + actividad reciente |
 | `/panel/seguridad` | **Seguridad** | Cambio de contraseña del administrador: verificación de la contraseña actual por reautenticación, mínimos de seguridad (10 caracteres, minúscula, mayúscula, número, símbolo), rechazo de la reutilización, medidor de fortaleza, cierre de las sesiones abiertas en otros dispositivos y registro en la bitácora (sin datos de la contraseña) |
-| `/panel/imagenes` | **Biblioteca de imágenes** | Inventario real (8 imágenes del proyecto + las cargadas en Storage), KPIs, buscador, filtros por formato / ubicación / estado, vista cuadrícula o lista, detalle con rutas (física, pública, nombre original, nombre almacenado, directorio, URL pública, proveedor) y referencias, **carga** por arrastre o selección múltiple con vista previa, progreso, cancelación, validación de contenido real y detección de duplicados, **editor** con recorte / ajuste / encuadre y vista previa contextual, reemplazo con copia de seguridad, eliminación con aviso cuando está en uso, **papelera** con restauración y borrado definitivo con doble confirmación, metadatos (ALT, título, descripción, categoría, etiquetas) y registro de actividad |
+| `/panel/imagenes` | **Biblioteca de imágenes** | Inventario por **apariciones** (24 registros, uno por cada lugar del sitio donde se usa una imagen) y, en otra pestaña, la biblioteca de **archivos físicos** (8). Por aparición: página, sección, componente, ruta física, URL usada por la página, dimensiones, y acciones **Editar**, **Reemplazar** y **Eliminar aparición** (esta última quita la imagen de esa sección sin tocar el archivo ni las demás apariciones). Por archivo: cuántas apariciones lo usan y borrado bloqueado mientras las haya vivas. Además: carga con vista previa, progreso, cancelación y detección de duplicados, editor con recorte / ajuste / encuadre, papelera con borrado definitivo con doble confirmación, metadatos (ALT, título, descripción, categoría, etiquetas) y registro de actividad. La navegación muestra el total: `Imágenes (24)` |
 | `/panel/usuarios` | **Usuarios** | Listado con nombre, **email**, identificador, rol y ficha de cliente vinculada; búsqueda por nombre y email; cambio de rol (con bloqueo del propio) |
 | `/panel/clientes` | **Clientes** | Alta/edición (nombre, documento, email, teléfono, domicilio, estado, abogado, notas internas), filtro por texto y estado, vinculación de cuenta registrada, conteos de consultas y expedientes |
 | `/panel/consultas` | **Administración de consultas** | KPIs (totales, nuevas, recibidas hoy, últimos 7 y 30 días, en análisis, tasa de respuesta, IPs distintas en 24 h), serie diaria de 30 días, distribución por estado, **listado paginado en el servidor (10 por página)**, buscador (nombre, email, asunto o código) y filtros (área, estado, desde/hasta, IP, sólo nuevas), **control de solicitudes por IP** con el límite 5/24 h, ficha lateral con IP y navegador, cambio de estado, asignación de abogado, vinculación a cliente/expediente, conversión de consulta en cliente, **notas internas**, **mensajes al cliente** e **historial administrativo** |
@@ -426,7 +426,88 @@ repositorio (ver commit `02d2eeb`):
 | La API devolvía `42501` en cualquier lectura | Las tablas se crearon sin `GRANT`: los roles de la API sólo quedaban con `REFERENCES, TRIGGER, TRUNCATE` | Migración `20260115000300_privilegios.sql`: `anon` lee sólo el catálogo de áreas, `authenticated` opera con RLS, `service_role` escribe |
 | El catálogo tenía 15 áreas y una con texto corrupto | El slug `danos-y-seguiros` convivía con `danos-y-seguros`; además el SQL se había pegado con la codificación equivocada | Slug unificado en `danos-y-seguros` (el que usa el sitio) y borrado de la fila duplicada; todo el texto re-aplicado en UTF-8 |
 
-### 10.11 Módulos «Seguridad» y «Biblioteca de imágenes» — verificación real ✅
+### 10.12 Inventario por apariciones — verificación real ✅
+
+**Qué cambió.** El inventario agrupaba por archivo físico: si 4 páginas usaban la misma
+foto, el panel mostraba **una** tarjeta con 4 referencias, y no había forma de editar
+un uso sin tocar los demás. Ahora el panel administra **apariciones**: cada lugar del
+sitio donde se usa una imagen es un registro independiente, con identificador propio
+(`home-hero`, `studio-intro`, `area-detail-familia`, …).
+
+**El conteo real: 8 archivos físicos y 24 apariciones.**
+
+Una auditoría independiente del código (agente verificador, sólo lectura) verificó una
+por una las 10 apariciones estáticas y los 14 slugs de área, y **corrigió un error de
+la especificación**: el total es **24, no 25**. La especificación original(now
+corregida en `docs/SPEC_APARICIONES_IMAGENES.md`) mezclaba una fila dinámica con las
+estáticas al sumar. El enunciado del pedido hablaba de "25" como ejemplo; lo que vale
+es que cada aparición real esté registrada una vez, y el escáner las cuenta.
+
+| Distribución real | Apariciones |
+|---|---|
+| `equipo-reunion.jpg` | 8 |
+| `equipo-pasillo.jpg` | 7 |
+| `equipo-sala.jpg` | 4 |
+| `equipo-audiencia-horizontal.jpg` | 3 |
+| `casoratti-hero.jpg` | 1 |
+| `justice-scale.jpg` | 1 |
+| `scales.webp` | **0** (sin uso: Vite ni lo emite) |
+| `team-room.jpg` | **0** (sin uso) |
+| **Total** | **24** sobre 8 archivos, en 8 páginas distintas |
+
+**Aislamiento entre apariciones** (verificado contra la API de producción):
+
+| Comprobación | Resultado |
+|---|---|
+| El RPC público devuelve las tres secciones `occurrences` / `files` / `hidden` | ✅ |
+| Un override de aparición aparece en `occurrences` y **no** en `files` | ✅ |
+| La fila del archivo físico **no** se modifica al reemplazar una aparición | ✅ |
+| Reemplazar la aparición A **no** toca la aparición B | ✅ |
+| Ninguna otra aparición queda modificada | ✅ |
+| Ocultar una aparición la saca de `occurrences` y la lista en `hidden` | ✅ |
+| El archivo físico **sigue existiendo** al ocultar la aparición | ✅ |
+| Un cliente no puede registrar apariciones, ni escribir en la bitácora, ni leerlas | ✅ |
+| `media_activity` sigue siendo de sólo lectura y con autor real (`auth.uid()`) | ✅ |
+| 23/23 comprobaciones en vivo | ✅ |
+
+**Herramientas**
+
+- `supabase/migrations/20260116000100_media_occurrences.sql` — columna `occurrence_id`
+  (nula = archivo físico, con valor = aparición), estado `hidden`, índice único
+  parcial por aparición, y el RPC público con su nueva forma de retorno.
+- `supabase/tests/media-occurrences-rls.test.ts` — 20 pruebas de seguridad.
+- `supabase/tests/media-rls.test.ts` — actualizada a la nueva forma del RPC.
+- `client/src/data/mediaOccurrences.ts` — el registro de apariciones (10 fijas + 14
+  áreas derivadas de los slugs reales de `practiceAreas`).
+- `client/src/lib/mediaOccurrenceCount.ts` — contador de apariciones para la navegación.
+
+**Corrección aplicada al sitio** (sin tocar el diseño): `MediaImg` acepta
+`occurrence` y resuelve por aparición → por archivo → asset compilado; si la
+aparición fue quitada, no renderiza la imagen y `PageIntro` oculta el bloque
+completo, de modo que la sección no queda con un hueco vacío.
+
+**En el panel (build local, con sesión de administrador)**
+
+| Prueba | Resultado |
+|---|---|
+| La navegación muestra el total de apariciones | ✅ «Imágenes (24)» |
+| La pestaña principal lista **una tarjeta por aparición** | ✅ 24 tarjetas con página, sección, componente, ruta física, URL, dimensiones y las acciones **Editar / Reemplazar / Eliminar aparición** |
+| Los indicadores del encabezado | ✅ 24 apariciones · 6 archivos físicos · 8 páginas con imágenes · 4 archivos usados en varias secciones · 2 sin referencias |
+| Filtros | ✅ por texto, página (9), sección (24), componente (9) y estado (sin cambios / reemplazada / oculta) |
+| La pestaña de archivos muestra cuántas apariciones usa cada uno | ✅ hero 1 · audiencia 3 · sala 4 · pasillo 7 · reunion 8 · 2 sin uso |
+| El detalle de un archivo explica la distinción | ✅ «Este archivo aparece en 8 apariciones del sitio. Para cambiarlo en un solo lugar, usá la pestaña Apariciones.» |
+| El borrado del archivo físico está bloqueado cuando tiene apariciones vivas | ✅ con el motivo: «Es un asset compilado del sitio: forma parte del build y no se puede eliminar desde el panel. Podés reemplazarlo por una versión nueva.» |
+| **Aislamiento verificado en pantalla** | ✅ se reemplazó `studio-intro` (El estudio · Encabezado · Studio): su tarjeta pasó a **REEMPLAZADA** con las medidas (800×450) y la URL del override, mientras las otras dos apariciones de «El estudio» siguieron en **SIN CAMBIOS** con su asset original |
+
+**Defecto encontrado y corregido durante la verificación**
+
+Al ocultar una aparición, el servicio liberaba su `storage_path`: al volver a
+mostrarla aparecía la imagen original del paquete y se perdía el reemplazo que
+el administrador había hecho. Ahora la fila oculta **conserva** su archivo
+—mientras está oculta no se sirve, y al restaurarla reaparece la versión
+elegida— y el test que fijaba el comportamiento anterior se actualizó.
+
+### 10.13 Módulos «Seguridad» y «Biblioteca de imágenes» — verificación real ✅
 
 Todo lo que sigue se ejecutó contra el proyecto `tdlmritilgtwnxbxkrze` y contra la
 aplicación real, no contra mocks.
@@ -616,6 +697,13 @@ y el del manifiesto), `vitest.config.ts`, `tsconfig.json`,
    se guarda una contraseña en claro.
 11. `scales.webp` y `team-room.jpg` no los referencia ningún archivo del sitio, así
     que Vite no los emite: aparecen en el inventario sin URL pública ni vista previa.
+12. **El recorte depende de que el servidor de imágenes mande CORS**: si no lo
+    manda, el editor sube el archivo sin recortar en lugar de fallar. El flujo
+    sigue siendo correcto, pero el resultado no tiene el recorte pedido.
+13. **Una aparición no tiene metadatos propios de tamaño**: las medidas que se
+    muestran son las del asset compilado (o las del override, si la hay). Si un
+    administrador sube una versión con otra proporción, el sitio la muestra con
+    `object-fit`, sin deformar el diseño.
 
 ## 13. Despliegue en producción
 

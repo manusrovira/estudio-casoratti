@@ -2,35 +2,45 @@ import { useEffect, useSyncExternalStore } from "react";
 import { getSupabase, isSupabaseConfigured } from "./supabase";
 
 /**
- * Resolución de imágenes reemplazadas.
+ * Resolución de imágenes por **aparición**.
  *
- * El sitio se despliega como sitio estático de sólo lectura: una imagen
- * compilada por Vite no se puede sobrescribir desde el panel. Lo que sí
- * existe es el bucket `site-media` de Supabase Storage, que es el
- * almacenamiento persistente real del proyecto.
+ * El sitio se despliega como sitio estático de sólo lectura: un asset
+ * compilado por Vite no se puede sobrescribir desde el panel. Lo que sí existe
+ * es el bucket `site-media` de Supabase Storage.
  *
- * Cuando el administrador reemplaza una imagen, la versión nueva queda en
- * Storage y se registra con la **misma ruta lógica** del asset original. Este
- * módulo pide al servidor el mapa {ruta lógica → ruta en Storage} y, si
- * existe, el sitio usa la versión nueva.
+ * El panel administra **apariciones**, no archivos: cada lugar del sitio donde
+ * se usa una imagen es un registro independiente, con su propio identificador
+ * (`occurrenceId`). Por eso la resolución tiene dos niveles:
  *
- * Reglas de seguridad del diseño:
- *   - Si Supabase no responde, se usa el asset compilado. El sitio nunca
- *     queda sin imagen por culpa del resolver.
- *   - La llamada es una sola por sesión de página, con respaldo en
- *     `sessionStorage` para no repetirla en cada navegación.
- *   - Sólo se consultan medios activos: la papelera no se sirve al público.
+ *   1. Override de la **aparición** (`occurrences`): lo que se cambia al editar
+ *      un registro concreto del inventario. Sólo afecta a ese lugar.
+ *   2. Override del **archivo** (`files`): reemplazo del recurso completo.
+ *
+ * Y una lista de apariciones **ocultas**: quitan la imagen de esa sección sin
+ * tocar el archivo ni las demás apariciones.
+ *
+ * Si Supabase no responde, se usa el asset compilado. El sitio nunca queda sin
+ * imagen por culpa del resolver.
  */
 
-const STORAGE_KEY = "casoratti.media.overrides.v1";
+const STORAGE_KEY = "casoratti.media.overrides.v2";
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-type OverrideMap = Record<string, string>;
+export type MediaOverrides = {
+  /** occurrenceId → URL pública. */
+  occurrences: Record<string, string>;
+  /** ruta lógica del archivo → URL pública. */
+  files: Record<string, string>;
+  /** Identificadores de aparición cuya imagen se quitó del sitio. */
+  hidden: string[];
+};
 
 type CacheEntry = {
-  map: OverrideMap;
+  data: MediaOverrides;
   fetchedAt: number;
 };
+
+const EMPTY: MediaOverrides = { occurrences: {}, files: {}, hidden: [] };
 
 let cache: CacheEntry | null = null;
 let inflight: Promise<void> | null = null;
@@ -46,7 +56,7 @@ function readSessionCache(): CacheEntry | null {
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CacheEntry;
-    if (!parsed || typeof parsed.fetchedAt !== "number") return null;
+    if (!parsed?.data) return null;
     return parsed;
   } catch {
     return null;
@@ -72,24 +82,39 @@ function buildPublicUrl(storagePath: string): string {
   return `${base}/storage/v1/object/public/site-media/${encoded}`;
 }
 
-async function loadOverrides(): Promise<OverrideMap | null> {
-  if (!isSupabaseConfigured) return null;
+async function loadOverrides(): Promise<void> {
+  if (!isSupabaseConfigured) return;
 
   const { data, error } = await getSupabase().rpc("resolve_media_overrides");
-  if (error || !data || typeof data !== "object") return null;
+  if (error || !data || typeof data !== "object") return;
 
-  const map: OverrideMap = {};
-  for (const [logicalPath, storagePath] of Object.entries(
-    data as Record<string, unknown>,
+  const payload = data as Partial<MediaOverrides>;
+  const next: MediaOverrides = { occurrences: {}, files: {}, hidden: [] };
+
+  for (const [occurrenceId, storagePath] of Object.entries(
+    payload.occurrences ?? {},
   )) {
     if (typeof storagePath !== "string" || !storagePath) continue;
     const url = buildPublicUrl(storagePath);
-    if (url) map[logicalPath] = url;
+    if (url) next.occurrences[occurrenceId] = url;
   }
-  return map;
+
+  for (const [logicalPath, storagePath] of Object.entries(payload.files ?? {})) {
+    if (typeof storagePath !== "string" || !storagePath) continue;
+    const url = buildPublicUrl(storagePath);
+    if (url) next.files[logicalPath] = url;
+  }
+
+  next.hidden = Array.isArray(payload.hidden)
+    ? payload.hidden.filter((id): id is string => typeof id === "string")
+    : [];
+
+  cache = { data: next, fetchedAt: Date.now() };
+  writeSessionCache(cache);
+  emit();
 }
 
-/** kicks off the load of the override map (idempotent). */
+/** Dispara la carga del mapa de reemplazos (idempotente). */
 export function ensureMediaOverrides(): void {
   if (cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) return;
   if (inflight) return;
@@ -102,12 +127,6 @@ export function ensureMediaOverrides(): void {
   }
 
   inflight = loadOverrides()
-    .then(map => {
-      if (!map) return;
-      cache = { map, fetchedAt: Date.now() };
-      writeSessionCache(cache);
-      emit();
-    })
     .catch(() => {
       /* Sin red o sin permisos: se conserva el asset compilado. */
     })
@@ -117,18 +136,31 @@ export function ensureMediaOverrides(): void {
 }
 
 /** Mapa de reemplazos conocidos, o `null` si todavía no se cargó. */
-export function getMediaOverrides(): OverrideMap | null {
-  return cache ? cache.map : null;
+export function getMediaOverrides(): MediaOverrides | null {
+  return cache ? cache.data : null;
 }
 
 /**
- * Devuelve la URL a usar para una imagen: el reemplazo en Storage si existe,
- * o el asset compilado como respaldo.
+ * URL definitiva de una imagen en un lugar concreto del sitio.
+ * Prioridad: override de la aparición → override del archivo → asset compilado.
  */
-export function resolveMediaUrl(logicalPath: string, fallback: string): string {
-  const map = cache?.map;
-  if (!map || !logicalPath) return fallback;
-  return map[logicalPath] ?? fallback;
+export function resolveMediaUrl(
+  occurrenceId: string | null,
+  logicalPath: string | null,
+  fallback: string,
+): string {
+  const data = cache?.data;
+  if (!data) return fallback;
+  if (occurrenceId && data.occurrences[occurrenceId]) return data.occurrences[occurrenceId];
+  if (logicalPath && data.files[logicalPath]) return data.files[logicalPath];
+  return fallback;
+}
+
+/** ¿El administrador quitó esta imagen de esa sección? */
+export function isOccurrenceHidden(occurrenceId: string | null): boolean {
+  if (!occurrenceId) return false;
+  const data = cache?.data;
+  return !!data && data.hidden.includes(occurrenceId);
 }
 
 function subscribe(listener: () => void): () => void {
@@ -138,19 +170,32 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-function getSnapshot(): OverrideMap | null {
-  return cache ? cache.map : null;
+function getSnapshot(): MediaOverrides | null {
+  return cache ? cache.data : null;
 }
 
 /**
- * Hook para el sitio público: devuelve la URL definitiva de una imagen.
+ * Hook del sitio público: devuelve la URL definitiva de una imagen.
  * Mientras el mapa no llega devuelve el asset compilado, de modo que el
  * diseño del sitio nunca cambia por culpa de una llamada de red.
  */
-export function useMediaSrc(logicalPath: string, fallback: string): string {
+export function useMediaSrc(
+  occurrenceId: string | null,
+  logicalPath: string | null,
+  fallback: string,
+): string {
   useSyncExternalStore(subscribe, getSnapshot, () => null);
   useEffect(() => {
     ensureMediaOverrides();
   }, []);
-  return resolveMediaUrl(logicalPath, fallback);
+  return resolveMediaUrl(occurrenceId, logicalPath, fallback);
+}
+
+/** Hook complementario: indica si la aparición fue quitada del sitio. */
+export function useMediaHidden(occurrenceId: string | null): boolean {
+  useSyncExternalStore(subscribe, getSnapshot, () => null);
+  useEffect(() => {
+    ensureMediaOverrides();
+  }, []);
+  return isOccurrenceHidden(occurrenceId);
 }

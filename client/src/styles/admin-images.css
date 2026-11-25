@@ -227,6 +227,37 @@
 .admin-media-status-replaced { border-color: var(--copper); color: var(--copper); background: rgba(178, 119, 85, .08); }
 .admin-media-status-trashed { border-color: rgba(157, 59, 46, .4); color: #9d3b2e; background: rgba(157, 59, 46, .07); }
 
+/* --- Apariciones -------------------------------------------------------------- */
+.admin-occurrence-card .admin-media-card-body {
+  gap: .45rem;
+}
+
+/* Dónde aparece: página, sección y componente. */
+.admin-occurrence-where {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+  margin: 0;
+}
+
+.admin-occurrence-tag {
+  padding: .12rem .45rem;
+  border: 1px solid var(--line);
+  background: var(--ivory);
+  color: var(--ink);
+  font-size: .64rem;
+  letter-spacing: .02em;
+}
+
+.admin-media-status-unchanged { border-color: var(--line); color: var(--muted); background: #f6f5f1; }
+.admin-media-status-hidden { border-color: rgba(157, 59, 46, .4); color: #9d3b2e; background: rgba(157, 59, 46, .07); }
+
+/* Resalta el bloque que hay que mirar primero (reemplazar una aparición). */
+.admin-media-highlight {
+  border-left: 3px solid var(--copper);
+  padding-left: .8rem;
+}
+
 /* --- Detalle ---------------------------------------------------------------- */
 .admin-media-detail-grid {
   display: grid;

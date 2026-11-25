@@ -8,9 +8,11 @@
 
 import { describe, expect, it } from "vitest";
 import type { MediaManifest } from "@/lib/mediaManifest";
-import type { MediaRow } from "./media-service";
+import type { MediaOccurrenceRow, MediaRow } from "./media-service";
 import {
+  countOccurrencesByFile,
   filterMediaInventory,
+  filterOccurrences,
   findDuplicateByName,
   findDuplicateMedia,
   mediaDeleteBlockers,
@@ -19,9 +21,19 @@ import {
   mediaFormatOptions,
   mediaUsageWarning,
   mergeMediaInventory,
+  mergeOccurrenceInventory,
+  occurrenceComponentOptions,
+  occurrencePageOptions,
+  occurrenceRemovalWarning,
+  occurrenceSectionOptions,
+  physicalFileDeleteBlockers,
   summarizeMediaInventory,
+  summarizeOccurrences,
+  totalOccurrenceCount,
   withCacheVersion,
   type InventoryFilters,
+  type MediaOccurrenceManifestRecord,
+  type OccurrenceFilters,
 } from "./media-inventory";
 
 /* ------------------------------------------------------------------ */
@@ -411,5 +423,607 @@ describe("utilidades", () => {
     expect(withCacheVersion("/assets/x.jpg", 123)).toBe("/assets/x.jpg?v=123");
     expect(withCacheVersion("/assets/x.jpg?a=1", 123)).toBe("/assets/x.jpg?a=1&v=123");
     expect(withCacheVersion("", 123)).toBe("");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Apariciones                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Fixture del sitio real: 8 archivos, 24 apariciones (10 estáticas y 14 del
+ * detalle de cada área de práctica), 8 páginas distintas y 2 archivos que
+ * ningún componente usa.
+ */
+
+const SITE_FILES = [
+  {
+    logicalPath: "assets/casoratti-hero.jpg",
+    name: "casoratti-hero.jpg",
+    format: "jpg" as const,
+    bytes: 672379,
+    width: 1600,
+    height: 900,
+  },
+  {
+    logicalPath: "assets/equipo-reunion.jpg",
+    name: "equipo-reunion.jpg",
+    format: "jpg" as const,
+    bytes: 241100,
+    width: 1400,
+    height: 933,
+  },
+  {
+    logicalPath: "assets/equipo-sala.jpg",
+    name: "equipo-sala.jpg",
+    format: "jpg" as const,
+    bytes: 198450,
+    width: 1400,
+    height: 933,
+  },
+  {
+    logicalPath: "assets/equipo-pasillo.jpg",
+    name: "equipo-pasillo.jpg",
+    format: "jpg" as const,
+    bytes: 210300,
+    width: 1400,
+    height: 933,
+  },
+  {
+    logicalPath: "assets/justice-scale.jpg",
+    name: "justice-scale.jpg",
+    format: "jpg" as const,
+    bytes: 143200,
+    width: 1200,
+    height: 800,
+  },
+  {
+    logicalPath: "assets/equipo-audiencia-horizontal.jpg",
+    name: "equipo-audiencia-horizontal.jpg",
+    format: "jpg" as const,
+    bytes: 187900,
+    width: 1600,
+    height: 900,
+  },
+  {
+    logicalPath: "assets/scales.webp",
+    name: "scales.webp",
+    format: "webp" as const,
+    bytes: 18832,
+    width: 600,
+    height: 600,
+  },
+  {
+    logicalPath: "assets/team-room.jpg",
+    name: "team-room.jpg",
+    format: "jpg" as const,
+    bytes: 160000,
+    width: 1200,
+    height: 800,
+  },
+];
+
+function siteEntry(file: (typeof SITE_FILES)[number]) {
+  return {
+    logicalPath: file.logicalPath,
+    physicalPath: `client/src/${file.logicalPath}`,
+    publicPath: `/assets/${file.name.replace(/\./g, "-")}-hash.${file.format}`,
+    originalName: file.name,
+    format: file.format,
+    bytes: file.bytes,
+    width: file.width,
+    height: file.height,
+    modifiedAt: "2026-11-10T08:00:00.000Z",
+    provider: "bundled" as const,
+    references: [],
+  };
+}
+
+/** Las 10 apariciones fijas del sitio, con su archivo y su línea reales. */
+const STATIC_OCCURRENCES: MediaOccurrenceManifestRecord[] = [
+  {
+    occurrenceId: "home-hero",
+    imageLogicalPath: "assets/casoratti-hero.jpg",
+    page: "Inicio",
+    section: "Portada",
+    component: "Home",
+    file: "client/src/pages/SitePages.tsx",
+    line: 32,
+    status: "detected",
+  },
+  {
+    occurrenceId: "home-split",
+    imageLogicalPath: "assets/equipo-reunion.jpg",
+    page: "Inicio",
+    section: "Presentación",
+    component: "Home",
+    file: "client/src/pages/SitePages.tsx",
+    line: 37,
+    status: "detected",
+  },
+  {
+    occurrenceId: "studio-intro",
+    imageLogicalPath: "assets/equipo-reunion.jpg",
+    page: "El estudio",
+    section: "Encabezado",
+    component: "Studio",
+    file: "client/src/pages/SitePages.tsx",
+    line: 45,
+    status: "detected",
+  },
+  {
+    occurrenceId: "studio-gallery-main",
+    imageLogicalPath: "assets/equipo-sala.jpg",
+    page: "El estudio",
+    section: "Galería principal",
+    component: "Studio",
+    file: "client/src/pages/SitePages.tsx",
+    line: 45,
+    status: "detected",
+  },
+  {
+    occurrenceId: "studio-gallery-aside",
+    imageLogicalPath: "assets/equipo-pasillo.jpg",
+    page: "El estudio",
+    section: "Galería lateral",
+    component: "Studio",
+    file: "client/src/pages/SitePages.tsx",
+    line: 45,
+    status: "detected",
+  },
+  {
+    occurrenceId: "areas-intro",
+    imageLogicalPath: "assets/equipo-pasillo.jpg",
+    page: "Áreas de práctica",
+    section: "Encabezado",
+    component: "Areas",
+    file: "client/src/pages/SitePages.tsx",
+    line: 49,
+    status: "detected",
+  },
+  {
+    occurrenceId: "values-intro",
+    imageLogicalPath: "assets/justice-scale.jpg",
+    page: "Valores",
+    section: "Encabezado",
+    component: "Values",
+    file: "client/src/pages/SitePages.tsx",
+    line: 63,
+    status: "detected",
+  },
+  {
+    occurrenceId: "resources-intro",
+    imageLogicalPath: "assets/equipo-reunion.jpg",
+    page: "Centro de recursos",
+    section: "Encabezado",
+    component: "Resources",
+    file: "client/src/pages/SitePages.tsx",
+    line: 66,
+    status: "detected",
+  },
+  {
+    occurrenceId: "faq-intro",
+    imageLogicalPath: "assets/equipo-reunion.jpg",
+    page: "Preguntas frecuentes",
+    section: "Encabezado",
+    component: "FAQ",
+    file: "client/src/pages/SitePages.tsx",
+    line: 73,
+    status: "detected",
+  },
+  {
+    occurrenceId: "contact-intro",
+    imageLogicalPath: "assets/equipo-pasillo.jpg",
+    page: "Contacto",
+    section: "Encabezado",
+    component: "Contact",
+    file: "client/src/pages/SitePages.tsx",
+    line: 178,
+    status: "detected",
+  },
+];
+
+/**
+ * Los 14 detalles de área, con el archivo que usa cada uno y la etiqueta real
+ * del área (que es la sección donde aparece).
+ */
+const AREA_OCCURRENCES: MediaOccurrenceManifestRecord[] = [
+  ["familia", "Personas", "assets/equipo-reunion.jpg"],
+  ["sucesiones", "Patrimonio familiar", "assets/equipo-sala.jpg"],
+  ["danos-y-seguros", "Responsabilidad", "assets/equipo-audiencia-horizontal.jpg"],
+  ["previsional", "Seguridad social", "assets/equipo-reunion.jpg"],
+  ["civil-y-comercial", "Patrimonial", "assets/equipo-pasillo.jpg"],
+  ["derecho-de-la-propiedad", "Inmuebles", "assets/equipo-sala.jpg"],
+  ["laboral", "Trabajo", "assets/equipo-reunion.jpg"],
+  ["penal", "Defensa", "assets/equipo-audiencia-horizontal.jpg"],
+  ["gestiones-administrativas", "Estado y trámites", "assets/equipo-pasillo.jpg"],
+  ["consumidor", "Relaciones de consumo", "assets/equipo-pasillo.jpg"],
+  ["societario-y-empresarial", "Negocios", "assets/equipo-sala.jpg"],
+  ["penal-economico", "Defensa especializada", "assets/equipo-audiencia-horizontal.jpg"],
+  ["mediacion-y-negociacion", "Prevención", "assets/equipo-reunion.jpg"],
+  ["gestoria-automotor", "Gestoría", "assets/equipo-pasillo.jpg"],
+].map(([slug, section, imageLogicalPath]) => ({
+  occurrenceId: `area-detail-${slug}`,
+  imageLogicalPath,
+  page: "Detalle del área",
+  section,
+  component: "AreaDetail",
+  file: "client/src/pages/SitePages.tsx",
+  line: 58,
+  status: "detected" as const,
+}));
+
+const SITE_OCCURRENCES = [...STATIC_OCCURRENCES, ...AREA_OCCURRENCES];
+
+function makeSiteManifest(
+  occurrences: MediaOccurrenceManifestRecord[] = SITE_OCCURRENCES,
+): MediaManifest {
+  return {
+    generatedAt: "2026-11-25T10:00:00.000Z",
+    entries: SITE_FILES.map(siteEntry),
+    occurrences,
+  } as unknown as MediaManifest;
+}
+
+const NO_OCCURRENCE_FILTERS: OccurrenceFilters = {
+  search: "",
+  page: "",
+  section: "",
+  component: "",
+  status: "all",
+};
+
+function makeOccurrenceRow(
+  overrides: Partial<MediaOccurrenceRow> & { occurrence_id: string },
+): MediaOccurrenceRow {
+  return {
+    storage_path: null,
+    status: "active",
+    title: null,
+    alt_text: null,
+    description: null,
+    category: null,
+    tags: [],
+    ...overrides,
+  };
+}
+
+describe("mergeOccurrenceInventory", () => {
+  it("devuelve un registro por aparición, sin agrupar", () => {
+    const occurrences = mergeOccurrenceInventory(makeSiteManifest(), [], []);
+
+    expect(occurrences).toHaveLength(24);
+    expect(new Set(occurrences.map(item => item.occurrenceId)).size).toBe(24);
+  });
+
+  it("no junta las apariciones que comparten el mismo archivo", () => {
+    const occurrences = mergeOccurrenceInventory(makeSiteManifest(), [], []);
+    const reuniones = occurrences.filter(
+      item => item.imageLogicalPath === "assets/equipo-reunion.jpg",
+    );
+
+    /* Las 8 apariciones de la imagen de la reunión siguen siendo 8. */
+    expect(reuniones).toHaveLength(8);
+    expect(reuniones.every(item => item.sharedCount === 8)).toBe(true);
+    expect(
+      reuniones.map(item => item.occurrenceId).sort(),
+    ).toEqual(
+      [
+        "area-detail-familia",
+        "area-detail-laboral",
+        "area-detail-mediacion-y-negociacion",
+        "area-detail-previsional",
+        "faq-intro",
+        "home-split",
+        "resources-intro",
+        "studio-intro",
+      ].sort(),
+    );
+  });
+
+  it("trae el lugar, el archivo y la URL de cada aparición", () => {
+    const occurrences = mergeOccurrenceInventory(makeSiteManifest(), [], []);
+    const hero = occurrences.find(item => item.occurrenceId === "home-hero");
+
+    expect(hero).toBeDefined();
+    expect(hero?.page).toBe("Inicio");
+    expect(hero?.section).toBe("Portada");
+    expect(hero?.component).toBe("Home");
+    expect(hero?.name).toBe("casoratti-hero.jpg");
+    expect(hero?.physicalPath).toBe("client/src/assets/casoratti-hero.jpg");
+    expect(hero?.publicUrl).toBe("/assets/casoratti-hero-jpg-hash.jpg");
+    expect(hero?.width).toBe(1600);
+    expect(hero?.height).toBe(900);
+    expect(hero?.status).toBe("unchanged");
+    expect(hero?.sourceFile).toBe("client/src/pages/SitePages.tsx");
+    expect(hero?.sourceLine).toBeGreaterThan(0);
+  });
+
+  it("marca como reemplazada la aparición que tiene ficha propia", () => {
+    const occurrenceRows = [
+      makeOccurrenceRow({
+        occurrence_id: "studio-gallery-aside",
+        storage_path: "occurrences/studio-gallery-aside/equipo-pasillo.jpg",
+        alt_text: "Reunión de trabajo en el estudio",
+      }),
+    ];
+
+    const occurrences = mergeOccurrenceInventory(
+      makeSiteManifest(),
+      [],
+      occurrenceRows,
+      { storageUrl: path => `https://cdn.test/${path}` },
+    );
+
+    const aside = occurrences.find(
+      item => item.occurrenceId === "studio-gallery-aside",
+    );
+    expect(aside?.status).toBe("replaced");
+    expect(aside?.publicUrl).toBe(
+      "https://cdn.test/occurrences/studio-gallery-aside/equipo-pasillo.jpg",
+    );
+    expect(aside?.metadata.altText).toBe("Reunión de trabajo en el estudio");
+
+    /* Las demás apariciones del mismo archivo no se tocan. */
+    const main = occurrences.find(
+      item => item.occurrenceId === "studio-gallery-main",
+    );
+    expect(main?.status).toBe("unchanged");
+  });
+
+  it("marca como oculta la aparición a la que se le quitó la imagen", () => {
+    const occurrenceRows = [
+      makeOccurrenceRow({
+        occurrence_id: "values-intro",
+        status: "hidden",
+      }),
+    ];
+
+    const occurrences = mergeOccurrenceInventory(
+      makeSiteManifest(),
+      [],
+      occurrenceRows,
+    );
+
+    const values = occurrences.find(item => item.occurrenceId === "values-intro");
+    expect(values?.status).toBe("hidden");
+    expect(values?.publicUrl).toBe("");
+  });
+
+  it("muestra la versión nueva del archivo en las apariciones que lo usan", () => {
+    const fileRow = makeRow({
+      id: "row-file-override",
+      logical_path: "assets/equipo-reunion.jpg",
+      storage_path: "images/general/equipo-reunion.jpg",
+      source: "override",
+      width: 1200,
+      height: 800,
+    });
+
+    const occurrences = mergeOccurrenceInventory(
+      makeSiteManifest(),
+      [fileRow],
+      [],
+      { storageUrl: path => `https://cdn.test/${path}` },
+    );
+
+    const split = occurrences.find(item => item.occurrenceId === "home-split");
+    expect(split?.status).toBe("replaced");
+    expect(split?.publicUrl).toBe(
+      "https://cdn.test/images/general/equipo-reunion.jpg",
+    );
+    expect(split?.width).toBe(1200);
+  });
+
+  it("devuelve una lista vacía si el manifiesto no trae apariciones", () => {    const manifest = {
+      generatedAt: "2026-11-25T10:00:00.000Z",
+      entries: SITE_FILES.map(siteEntry),
+    } as MediaManifest;
+
+    expect(mergeOccurrenceInventory(manifest, [], [])).toEqual([]);
+  });
+});
+
+describe("resumen de apariciones", () => {
+  it("cuenta los números reales del sitio", () => {
+    const occurrences = mergeOccurrenceInventory(makeSiteManifest(), [], []);
+    const files = mergeMediaInventory(makeSiteManifest(), []);
+
+    const summary = summarizeOccurrences(occurrences, files);
+
+    expect(summary.totalOccurrences).toBe(24);
+    expect(summary.physicalFiles).toBe(6);
+    expect(summary.pagesWithImages).toBe(8);
+    expect(summary.sharedImages).toBe(4);
+    expect(summary.unusedImages).toBe(2);
+  });
+
+  it("cuenta el total de apariciones para el contador de la navegación", () => {
+    const occurrences = mergeOccurrenceInventory(makeSiteManifest(), [], []);
+    expect(totalOccurrenceCount(occurrences)).toBe(24);
+  });
+
+  it("cuenta cuántas apariciones usa cada archivo", () => {
+    const occurrences = mergeOccurrenceInventory(makeSiteManifest(), [], []);
+    const counts = countOccurrencesByFile(occurrences);
+
+    expect(counts.get("assets/equipo-reunion.jpg")).toBe(8);
+    expect(counts.get("assets/equipo-pasillo.jpg")).toBe(7);
+    expect(counts.get("assets/equipo-sala.jpg")).toBe(4);
+    expect(counts.get("assets/equipo-audiencia-horizontal.jpg")).toBe(3);
+    expect(counts.get("assets/casoratti-hero.jpg")).toBe(1);
+    expect(counts.get("assets/scales.webp")).toBeUndefined();
+  });
+});
+
+describe("filtros de apariciones", () => {
+  const occurrences = mergeOccurrenceInventory(makeSiteManifest(), [], []);
+
+  it("filtra por página", () => {
+    const found = filterOccurrences(occurrences, {
+      ...NO_OCCURRENCE_FILTERS,
+      page: "Inicio",
+    });
+    expect(found).toHaveLength(2);
+    expect(found.map(item => item.occurrenceId).sort()).toEqual([
+      "home-hero",
+      "home-split",
+    ]);
+  });
+
+  it("filtra por sección", () => {
+    const found = filterOccurrences(occurrences, {
+      ...NO_OCCURRENCE_FILTERS,
+      section: "Encabezado",
+    });
+    /* studio-intro, areas-intro, values-intro, resources-intro, faq-intro y
+       contact-intro. */
+    expect(found).toHaveLength(6);
+  });
+
+  it("filtra por componente", () => {
+    const found = filterOccurrences(occurrences, {
+      ...NO_OCCURRENCE_FILTERS,
+      component: "Home",
+    });
+    expect(found).toHaveLength(2);
+    expect(found.map(item => item.occurrenceId).sort()).toEqual([
+      "home-hero",
+      "home-split",
+    ]);
+  });
+
+  it("filtra por texto", () => {
+    const found = filterOccurrences(occurrences, {
+      ...NO_OCCURRENCE_FILTERS,
+      search: "penal",
+    });
+    expect(found.map(item => item.occurrenceId)).toEqual([
+      "area-detail-penal",
+      "area-detail-penal-economico",
+    ]);
+  });
+
+  it("filtra por estado", () => {
+    const occurrenceRows = [
+      makeOccurrenceRow({
+        occurrence_id: "home-hero",
+        storage_path: "occurrences/home-hero/hero.jpg",
+      }),
+    ];
+    const withOverride = mergeOccurrenceInventory(
+      makeSiteManifest(),
+      [],
+      occurrenceRows,
+    );
+
+    const found = filterOccurrences(withOverride, {
+      ...NO_OCCURRENCE_FILTERS,
+      status: "replaced",
+    });
+    expect(found).toHaveLength(1);
+    expect(found[0].occurrenceId).toBe("home-hero");
+  });
+
+  it("devuelve todo cuando no hay filtros", () => {
+    expect(filterOccurrences(occurrences, NO_OCCURRENCE_FILTERS)).toHaveLength(24);
+  });
+
+  it("lista las páginas, secciones y componentes sin repetir", () => {
+    expect(occurrencePageOptions(occurrences)).toEqual([
+      "Áreas de práctica",
+      "Centro de recursos",
+      "Contacto",
+      "Detalle del área",
+      "El estudio",
+      "Inicio",
+      "Preguntas frecuentes",
+      "Valores",
+    ]);
+
+    /* 5 secciones fijas más la etiqueta de cada una de las 14 áreas. */
+    const sections = occurrenceSectionOptions(occurrences);
+    expect(sections).toHaveLength(19);
+    expect(sections).toContain("Encabezado");
+    expect(sections).toContain("Portada");
+    expect(sections).toContain("Defensa especializada");
+
+    expect(occurrenceComponentOptions(occurrences)).toEqual([
+      "AreaDetail",
+      "Areas",
+      "Contact",
+      "FAQ",
+      "Home",
+      "Resources",
+      "Studio",
+      "Values",
+    ]);
+  });
+});
+
+describe("borrado de archivos con apariciones vivas", () => {
+  const occurrences = mergeOccurrenceInventory(makeSiteManifest(), [], []);
+  const files = mergeMediaInventory(makeSiteManifest(), []);
+  const counts = countOccurrencesByFile(occurrences);
+
+  it("bloquea el borrado de un archivo que tiene apariciones", () => {
+    const reunion = files.find(
+      item => item.logicalPath === "assets/equipo-reunion.jpg",
+    );
+    expect(reunion).toBeDefined();
+
+    const blockers = physicalFileDeleteBlockers(
+      reunion!,
+      counts.get("assets/equipo-reunion.jpg") ?? 0,
+    );
+
+    expect(blockers.length).toBeGreaterThan(0);
+    expect(blockers.join(" ")).toContain("8 apariciones");
+  });
+
+  it("permite borrar un archivo del banco que no usa ninguna aparición", () => {
+    const storageRow = makeRow({
+      id: "row-storage",
+      logical_path: "images/general/guardia.png",
+      storage_path: "images/general/guardia.png",
+      stored_name: "guardia.png",
+      original_name: "Guardia.png",
+      format: "png",
+      mime_type: "image/png",
+    });
+    const storageFiles = mergeMediaInventory(null, [storageRow]);
+    const storageFile = storageFiles[0];
+
+    const blockers = physicalFileDeleteBlockers(storageFile, 0);
+
+    expect(blockers).toEqual([]);
+  });
+
+  it("protege los assets del paquete aunque no tengan apariciones", () => {
+    const hero = files.find(
+      item => item.logicalPath === "assets/casoratti-hero.jpg",
+    );
+    expect(hero).toBeDefined();
+
+    const blockers = physicalFileDeleteBlockers(
+      hero!,
+      counts.get("assets/casoratti-hero.jpg") ?? 0,
+    );
+
+    expect(blockers.join(" ")).toContain("build");
+  });
+
+  it("avisa cuántas apariciones comparten el archivo al quitar una", () => {
+    const reunion = occurrences.find(
+      item => item.occurrenceId === "studio-intro",
+    );
+    expect(reunion?.sharedCount).toBe(8);
+    expect(occurrenceRemovalWarning(reunion!)).toContain("8 apariciones");
+    expect(occurrenceRemovalWarning(reunion!)).toContain("no se borra");
+  });
+
+  it("avisa cuando la aparición es la única que usa el archivo", () => {
+    const hero = occurrences.find(item => item.occurrenceId === "home-hero");
+    expect(occurrenceRemovalWarning(hero!)).toContain("la única que usa");
   });
 });

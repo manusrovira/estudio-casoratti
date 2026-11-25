@@ -213,10 +213,16 @@ describe("3 · El visitante anónimo sólo usa el RPC público", () => {
   it("sí puede ejecutar resolve_media_overrides y recibe sólo los medios activos", async () => {
     const { rows } = await asAnon((sql) => sql(`select public.resolve_media_overrides() as mapa`));
     expect(rows).toHaveLength(1);
-    // La imagen en papelera y la que no tiene ruta de Storage no aparecen.
+    // El RPC separa las tres secciones: apariciones, archivos físicos y
+    // apariciones ocultas. La imagen en papelera y la que no tiene ruta de
+    // Storage no aparecen.
     expect(rows[0].mapa).toEqual({
-      "assets/casoratti-hero.jpg": "overrides/casoratti-hero.jpg",
-      "images/equipo/equipo.jpg": "images/equipo/equipo.jpg",
+      occurrences: {},
+      files: {
+        "assets/casoratti-hero.jpg": "overrides/casoratti-hero.jpg",
+        "images/equipo/equipo.jpg": "images/equipo/equipo.jpg",
+      },
+      hidden: [],
     });
   });
 });

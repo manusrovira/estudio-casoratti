@@ -726,6 +726,662 @@ export function mediaLogicalPath(folder: string, fileName: string): string {
 }
 
 /* ------------------------------------------------------------------ */
+/* Apariciones                                                          */
+/* ------------------------------------------------------------------ */
+
+/** Carpeta del bucket donde viven los archivos de las apariciones. */
+export const MEDIA_OCCURRENCE_PREFIX = "occurrences";
+
+/**
+ * Fila de `site_media` que corresponde a una **aparición**: un lugar concreto
+ * del sitio donde se usa una imagen.
+ *
+ * La fila del archivo físico nunca se toca desde acá: una aparición es un
+ * registro aparte, con su propio `occurrence_id` y su propia ruta lógica
+ * (`occurrence/<id>`).
+ */
+export type MediaOccurrenceRow = {
+  occurrence_id: string;
+  storage_path: string | null;
+  status: "active" | "trashed" | "hidden";
+  title: string | null;
+  alt_text: string | null;
+  description: string | null;
+  category: string | null;
+  tags: string[];
+};
+
+/** Fila completa de `site_media` con el identificador de aparición. */
+type OccurrenceDbRow = {
+  id?: string;
+  occurrence_id?: string | null;
+  storage_path?: string | null;
+  status?: string | null;
+  logical_path?: string | null;
+  original_name?: string | null;
+  stored_name?: string | null;
+  mime_type?: string | null;
+  format?: string | null;
+  size_bytes?: number | null;
+  width?: number | null;
+  height?: number | null;
+  title?: string | null;
+  alt_text?: string | null;
+  description?: string | null;
+  category?: string | null;
+  tags?: string[] | null;
+};
+
+/**
+ * Contexto mínimo del archivo que usa la aparición. Se usa sólo cuando la
+ * aparición todavía no tiene fila propia y hay que crearla (por ejemplo, al
+ * quitarle la imagen a una aparición que nunca fue editada).
+ */
+export type MediaOccurrenceContext = {
+  /** Nombre original del archivo que usa la aparición. */
+  name?: string;
+  /** Formato del archivo ("jpg", "png", …). */
+  format?: string;
+  /** Tipo MIME declarado del archivo. */
+  mimeType?: string;
+  /** Peso del archivo, en bytes. */
+  bytes?: number;
+  /** Ancho en píxeles. */
+  width?: number | null;
+  /** Alto en píxeles. */
+  height?: number | null;
+};
+
+/** ¿El error dice que la columna `occurrence_id` todavía no existe? */
+function isMissingOccurrenceColumn(
+  error: { code?: string; message?: string } | null,
+): boolean {
+  if (!error) return false;
+  const code = error.code ?? "";
+  const message = (error.message ?? "").toLowerCase();
+  return (
+    code === "42703" ||
+    message.includes("occurrence_id") ||
+    message.includes("does not exist")
+  );
+}
+
+/** Normaliza una fila de la base al tipo público de aparición. */
+function normalizeOccurrenceRow(row: OccurrenceDbRow): MediaOccurrenceRow {
+  const status =
+    row.status === "hidden" || row.status === "trashed" ? row.status : "active";
+  return {
+    occurrence_id: row.occurrence_id ?? "",
+    storage_path: row.storage_path ?? null,
+    status,
+    title: row.title ?? null,
+    alt_text: row.alt_text ?? null,
+    description: row.description ?? null,
+    category: row.category ?? null,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+  };
+}
+
+/** Ruta lógica de la fila de una aparición: `occurrence/<id>`. */
+export function occurrenceLogicalPath(occurrenceId: string): string {
+  return `occurrence/${(occurrenceId ?? "").trim()}`;
+}
+
+/**
+ * Ruta dentro del bucket para el archivo de una aparición. Cada aparición
+ * tiene su propia carpeta: dos apariciones nunca comparten objeto.
+ */
+export function occurrenceStoragePath(
+  occurrenceId: string,
+  fileName: string,
+): string {
+  const id = (occurrenceId ?? "").trim().replace(/[^a-zA-Z0-9_-]+/g, "-");
+  return `${MEDIA_OCCURRENCE_PREFIX}/${id}/${normalizeMediaName(fileName)}`;
+}
+
+/**
+ * Lista las apariciones que tienen ficha propia en la base (las que fueron
+ * editadas, reemplazadas u ocultadas desde el panel).
+ *
+ * Si la base todavía no tiene la columna `occurrence_id` (migración pendiente)
+ * devuelve una lista vacía: el panel sigue funcionando.
+ */
+export async function listOccurrenceOverrides(): Promise<MediaOccurrenceRow[]> {
+  const { data, error } = await supabaseOrThrow()
+    .from("site_media")
+    .select(
+      "occurrence_id, storage_path, status, title, alt_text, description, category, tags",
+    )
+    .not("occurrence_id", "is", null)
+    .order("occurrence_id", { ascending: true });
+
+  if (error) {
+    if (isMissingOccurrenceColumn(error)) {
+      console.warn(
+        "La tabla site_media todavía no tiene la columna occurrence_id: no hay apariciones registradas.",
+      );
+      return [];
+    }
+    throw new Error(
+      errorMessage(error, "No se pudieron cargar las apariciones de imágenes."),
+    );
+  }
+
+  return ((data ?? []) as OccurrenceDbRow[]).map(normalizeOccurrenceRow);
+}
+
+/**
+ * Reemplaza la imagen de **una sola aparición**.
+ *
+ * Escribe una fila con `occurrence_id` y `logical_path = occurrence/<id>`:
+ * la fila del archivo físico no se toca, así que las demás apariciones que
+ * usan ese mismo archivo siguen mostrando la imagen original.
+ *
+ * Con `backup: true` (por omisión) la versión anterior se copia a `backups/`.
+ */
+export async function upsertOccurrenceImage(
+  occurrenceId: string,
+  file: File,
+  options?: { backup?: boolean },
+): Promise<{ ok: true; storagePath: string } | { ok: false; error: string }> {
+  const id = (occurrenceId ?? "").trim();
+  if (!id) {
+    return { ok: false, error: "No se indicó qué aparición hay que reemplazar." };
+  }
+  if (!isSafeRelativePath(id)) {
+    return { ok: false, error: "El identificador de la aparición no es válido." };
+  }
+
+  const validation = await validateImageFile(file);
+  if (!validation.ok) return { ok: false, error: validation.error };
+
+  const supabase = supabaseOrThrow();
+  const { data: existing, error: lookupError } = await supabase
+    .from("site_media")
+    .select("id, storage_path, logical_path")
+    .eq("occurrence_id", id)
+    .maybeSingle();
+
+  if (lookupError) {
+    if (isMissingOccurrenceColumn(lookupError)) {
+      return {
+        ok: false,
+        error:
+          "La base todavía no admite apariciones: falta aplicar la migración de la tabla de imágenes.",
+      };
+    }
+    return {
+      ok: false,
+      error: errorMessage(
+        lookupError,
+        "No se pudo buscar la aparición a reemplazar.",
+      ),
+    };
+  }
+
+  const current = (existing ?? null) as OccurrenceDbRow | null;
+  const logicalPath = occurrenceLogicalPath(id);
+  const storedName = normalizeMediaName(file.name);
+  const storagePath = occurrenceStoragePath(id, storedName);
+
+  /* Copia de seguridad de la versión anterior (si la había). */
+  const withBackup = options?.backup !== false;
+  let backupPath: string | null = null;
+  if (withBackup && current?.storage_path) {
+    backupPath = backupStoragePath(current.storage_path);
+    const { error: copyError } = await supabase.storage
+      .from(SITE_MEDIA_BUCKET)
+      .copy(current.storage_path, backupPath);
+    if (copyError) {
+      return {
+        ok: false,
+        error: errorMessage(
+          copyError,
+          "No se pudo guardar la copia de seguridad de la imagen anterior.",
+        ),
+      };
+    }
+  }
+
+  const { error: uploadError } = await supabase.storage
+    .from(SITE_MEDIA_BUCKET)
+    .upload(storagePath, file, { upsert: true, cacheControl: "3600" });
+
+  if (uploadError) {
+    return {
+      ok: false,
+      error: errorMessage(uploadError, "No se pudo subir la imagen de la aparición."),
+    };
+  }
+
+  const dimensions = await readImageDimensions(file);
+  const payload = {
+    occurrence_id: id,
+    logical_path: logicalPath,
+    storage_path: storagePath,
+    provider: "supabase-storage",
+    source: "override",
+    original_name: file.name,
+    stored_name: storedName,
+    mime_type: mimeOf(storedName),
+    format: formatOf(storedName),
+    size_bytes: file.size,
+    width: dimensions?.width ?? null,
+    height: dimensions?.height ?? null,
+    status: "active",
+    deleted_at: null,
+    deleted_by: null,
+    updated_at: new Date().toISOString(),
+    updated_by: await currentUserId(),
+  };
+
+  if (current?.id) {
+    const { error: updateError } = await supabase
+      .from("site_media")
+      .update(payload)
+      .eq("id", current.id);
+
+    if (updateError) {
+      return {
+        ok: false,
+        error: errorMessage(
+          updateError,
+          "La imagen se subió pero no se pudo registrar el reemplazo de la aparición.",
+        ),
+      };
+    }
+
+    /* El objeto anterior queda respaldado en `backups/`: se puede limpiar. */
+    if (
+      backupPath &&
+      current.storage_path &&
+      current.storage_path !== storagePath
+    ) {
+      await supabase.storage
+        .from(SITE_MEDIA_BUCKET)
+        .remove([current.storage_path]);
+    }
+  } else {
+    const { error: insertError } = await supabase.from("site_media").insert({
+      ...payload,
+      created_by: await currentUserId(),
+    });
+
+    if (insertError) {
+      // El objeto quedó subido pero sin registro: se borra para no dejar basura.
+      await supabase.storage.from(SITE_MEDIA_BUCKET).remove([storagePath]);
+      return {
+        ok: false,
+        error: errorMessage(
+          insertError,
+          "La imagen se subió pero no se pudo registrar la aparición.",
+        ),
+      };
+    }
+  }
+
+  await logMediaActivity("replace", logicalPath, "success", {
+    occurrenceId: id,
+    storagePath,
+    backupPath,
+  });
+  return { ok: true, storagePath };
+}
+
+/**
+ * Quita la imagen de una aparición (`hidden: true`) o la vuelve a mostrar
+ * (`hidden: false`).
+ *
+ * Al ocultarla, el sitio deja de mostrar esa imagen y las demás apariciones no
+ * cambian. **El reemplazo se conserva**: la fila queda oculta pero sigue
+ * apuntando a su archivo, así que al volver a mostrarla reaparece la versión
+ * que el administrador había elegido, y no la original del paquete.
+ */
+export async function setOccurrenceHidden(
+  occurrenceId: string,
+  hidden: boolean,
+  context?: MediaOccurrenceContext,
+): Promise<MediaResult> {
+  const id = (occurrenceId ?? "").trim();
+  if (!id) {
+    return { ok: false, error: "No se indicó la aparición." };
+  }
+  if (!isSafeRelativePath(id)) {
+    return { ok: false, error: "El identificador de la aparición no es válido." };
+  }
+
+  const supabase = supabaseOrThrow();
+  const { data: row, error: lookupError } = await supabase
+    .from("site_media")
+    .select("id, storage_path, status, logical_path")
+    .eq("occurrence_id", id)
+    .maybeSingle();
+
+  if (lookupError) {
+    if (isMissingOccurrenceColumn(lookupError)) {
+      return {
+        ok: false,
+        error:
+          "La base todavía no admite apariciones: falta aplicar la migración de la tabla de imágenes.",
+      };
+    }
+    return {
+      ok: false,
+      error: errorMessage(lookupError, "No se pudo buscar la aparición."),
+    };
+  }
+
+  const current = (row ?? null) as OccurrenceDbRow | null;
+  const logicalPath = occurrenceLogicalPath(id);
+
+  if (hidden) {
+    if (!current?.id) {
+      /* La aparición todavía no tiene ficha: se crea oculta y sin archivo. */
+      const format = (context?.format ?? "jpg").toLowerCase();
+      const { error: insertError } = await supabase.from("site_media").insert({
+        occurrence_id: id,
+        logical_path: logicalPath,
+        storage_path: null,
+        provider: "supabase-storage",
+        source: "override",
+        original_name: context?.name ?? id,
+        stored_name: null,
+        mime_type:
+          context?.mimeType ?? MEDIA_EXTENSION_MIME[format] ?? "image/jpeg",
+        format: MEDIA_EXTENSION_MIME[format] ? format : "jpg",
+        size_bytes: Math.max(0, context?.bytes ?? 0),
+        width: context?.width ?? null,
+        height: context?.height ?? null,
+        status: "hidden",
+        deleted_at: new Date().toISOString(),
+        deleted_by: await currentUserId(),
+        created_by: await currentUserId(),
+        updated_at: new Date().toISOString(),
+        updated_by: await currentUserId(),
+      });
+
+      if (insertError) {
+        return {
+          ok: false,
+          error: errorMessage(
+            insertError,
+            "No se pudo quitar la imagen de esa sección.",
+          ),
+        };
+      }
+
+      await logMediaActivity("delete", logicalPath, "success", {
+        occurrenceId: id,
+        accion: "ocultar-aparicion",
+      });
+      return { ok: true };
+    }
+
+    const { error } = await supabase
+      .from("site_media")
+      .update({
+        status: "hidden",
+        deleted_at: new Date().toISOString(),
+        deleted_by: await currentUserId(),
+        updated_at: new Date().toISOString(),
+        updated_by: await currentUserId(),
+      })
+      .eq("id", current.id);
+
+    if (error) {
+      return {
+        ok: false,
+        error: errorMessage(
+          error,
+          "No se pudo quitar la imagen de esa sección.",
+        ),
+      };
+    }
+
+    await logMediaActivity("delete", logicalPath, "success", {
+      occurrenceId: id,
+      accion: "ocultar-aparicion",
+      storagePathAnterior: current.storage_path ?? null,
+    });
+    return { ok: true };
+  }
+
+  if (!current?.id) {
+    return {
+      ok: false,
+      error: "Esta aparición no tiene una ficha para restaurar.",
+    };
+  }
+
+  const { error } = await supabase
+    .from("site_media")
+    .update({
+      status: "active",
+      deleted_at: null,
+      deleted_by: null,
+      updated_at: new Date().toISOString(),
+      updated_by: await currentUserId(),
+    })
+    .eq("id", current.id);
+
+  if (error) {
+    return {
+      ok: false,
+      error: errorMessage(error, "No se pudo restaurar la aparición."),
+    };
+  }
+
+  await logMediaActivity("restore", logicalPath, "success", {
+    occurrenceId: id,
+    accion: "mostrar-aparicion",
+  });
+  return { ok: true };
+}
+
+/**
+ * Actualiza los metadatos descriptivos de **una aparición** (texto
+ * alternativo, título, descripción, categoría y etiquetas).
+ */
+export async function updateOccurrenceMetadata(
+  occurrenceId: string,
+  patch: Partial<
+    Pick<
+      MediaOccurrenceRow,
+      "title" | "alt_text" | "description" | "category" | "tags"
+    >
+  >,
+  context?: MediaOccurrenceContext,
+): Promise<MediaResult> {
+  const id = (occurrenceId ?? "").trim();
+  if (!id) {
+    return { ok: false, error: "No se indicó la aparición." };
+  }
+
+  const allowed = [
+    "title",
+    "alt_text",
+    "description",
+    "category",
+    "tags",
+  ] as const;
+  const payload: Record<string, unknown> = {};
+  for (const key of allowed) {
+    if (key in (patch ?? {})) {
+      payload[key] = (patch as Record<string, unknown>)[key];
+    }
+  }
+  if (!Object.keys(payload).length) {
+    return { ok: false, error: "No hay cambios para guardar." };
+  }
+
+  const supabase = supabaseOrThrow();
+  const { data: row, error: lookupError } = await supabase
+    .from("site_media")
+    .select("id")
+    .eq("occurrence_id", id)
+    .maybeSingle();
+
+  if (lookupError) {
+    if (isMissingOccurrenceColumn(lookupError)) {
+      return {
+        ok: false,
+        error:
+          "La base todavía no admite apariciones: falta aplicar la migración de la tabla de imágenes.",
+      };
+    }
+    return {
+      ok: false,
+      error: errorMessage(
+        lookupError,
+        "No se pudo buscar la aparición.",
+      ),
+    };
+  }
+
+  const current = (row ?? null) as OccurrenceDbRow | null;
+  const now = new Date().toISOString();
+
+  if (!current?.id) {
+    /* Sin ficha previa: se crea con la información descriptiva cargada. */
+    const format = (context?.format ?? "jpg").toLowerCase();
+    const { error: insertError } = await supabase.from("site_media").insert({
+      occurrence_id: id,
+      logical_path: occurrenceLogicalPath(id),
+      storage_path: null,
+      provider: "supabase-storage",
+      source: "override",
+      original_name: context?.name ?? id,
+      stored_name: null,
+      mime_type:
+        context?.mimeType ?? MEDIA_EXTENSION_MIME[format] ?? "image/jpeg",
+      format: MEDIA_EXTENSION_MIME[format] ? format : "jpg",
+      size_bytes: Math.max(0, context?.bytes ?? 0),
+      width: context?.width ?? null,
+      height: context?.height ?? null,
+      status: "active",
+      ...payload,
+      created_by: await currentUserId(),
+      updated_at: now,
+      updated_by: await currentUserId(),
+    });
+
+    if (insertError) {
+      return {
+        ok: false,
+        error: errorMessage(
+          insertError,
+          "No se pudo actualizar la información de la aparición.",
+        ),
+      };
+    }
+
+    await logMediaActivity("edit", occurrenceLogicalPath(id), "success", {
+      occurrenceId: id,
+      campos: Object.keys(payload),
+    });
+    return { ok: true };
+  }
+
+  const { error } = await supabase
+    .from("site_media")
+    .update({
+      ...payload,
+      updated_at: now,
+      updated_by: await currentUserId(),
+    })
+    .eq("id", current.id);
+
+  if (error) {
+    return {
+      ok: false,
+      error: errorMessage(
+        error,
+        "No se pudo actualizar la información de la aparición.",
+      ),
+    };
+  }
+
+  await logMediaActivity("edit", occurrenceLogicalPath(id), "success", {
+    occurrenceId: id,
+    campos: Object.keys(payload),
+  });
+  return { ok: true };
+}
+
+/**
+ * Deshace el reemplazo de una aparición: borra su fila y su objeto, y el
+ * sitio vuelve a mostrar el archivo original del paquete.
+ */
+export async function purgeOccurrenceOverride(
+  occurrenceId: string,
+): Promise<MediaResult> {
+  const id = (occurrenceId ?? "").trim();
+  if (!id) {
+    return { ok: false, error: "No se indicó la aparición." };
+  }
+
+  const supabase = supabaseOrThrow();
+  const { data: row, error: lookupError } = await supabase
+    .from("site_media")
+    .select("id, storage_path, logical_path")
+    .eq("occurrence_id", id)
+    .maybeSingle();
+
+  if (lookupError) {
+    return {
+      ok: false,
+      error: errorMessage(lookupError, "No se pudo buscar la aparición."),
+    };
+  }
+
+  const current = (row ?? null) as OccurrenceDbRow | null;
+  if (!current?.id) {
+    return {
+      ok: false,
+      error: "Esta aparición no tiene un reemplazo propio que se pueda deshacer.",
+    };
+  }
+
+  if (current.storage_path && !isProtectedMediaPath(current.storage_path)) {
+    const { error: storageError } = await supabase.storage
+      .from(SITE_MEDIA_BUCKET)
+      .remove([current.storage_path]);
+    if (storageError) {
+      return {
+        ok: false,
+        error: errorMessage(
+          storageError,
+          "No se pudo borrar el archivo del reemplazo.",
+        ),
+      };
+    }
+  }
+
+  const { error: deleteError } = await supabase
+    .from("site_media")
+    .delete()
+    .eq("id", current.id);
+
+  if (deleteError) {
+    return {
+      ok: false,
+      error: errorMessage(
+        deleteError,
+        "No se pudo eliminar el registro del reemplazo.",
+      ),
+    };
+  }
+
+  await logMediaActivity(
+    "delete",
+    current.logical_path ?? occurrenceLogicalPath(id),
+    "success",
+    { occurrenceId: id, accion: "deshacer-reemplazo" },
+  );
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
 /* Auditoría                                                           */
 /* ------------------------------------------------------------------ */
 
