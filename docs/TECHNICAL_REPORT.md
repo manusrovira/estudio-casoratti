@@ -621,12 +621,13 @@ y el del manifiesto), `vitest.config.ts`, `tsconfig.json`,
 
 | Pieza | Identificador | Estado |
 |---|---|---|
-| Repositorio | `https://github.com/manusrovira/estudio-casoratti` (rama `main`) | ✅ commits `84609ff` → `02d2eeb` |
+| Repositorio | `https://github.com/manusrovira/estudio-casoratti` (rama `main`) | ✅ commits `84609ff` → `bb9dda5` |
 | Sitio público | `https://estudio-casoratti.vercel.app` | ✅ |
 | Proyecto Vercel | `cimiaproyect/estudio-casoratti` (plan Hobby) | ✅ deployments "Ready" (integración con GitHub: cada push a `main` despliega) |
 | Proyecto Supabase | `estudio casoratti` · ref `tdlmritilgtwnxbxkrze` · org "Estudio Casoratti" | ✅ Healthy · región us-west-2 |
 | Edge Function | `submit-consultation` | ✅ desplegada, con secretos `SITE_ORIGIN` y `RATE_LIMIT_SALT` |
 | Variables en Vercel | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | ✅ (sólo las dos públicas, tipo Config) |
+| Bucket multimedia | `site-media` (público, 10 MB) | ✅ creado y verificado |
 
 **Configuración de build en Vercel** (`vercel.json`):
 
@@ -642,16 +643,30 @@ y el del manifiesto), `vitest.config.ts`, `tsconfig.json`,
 El `rewrite` catch-all es indispensable: el sitio es una SPA y `/panel/usuarios`
 tiene que servir `index.html` con un 200 directo (verificado).
 
-**Cuentas reales creadas** (password única para las cinco: `casoratti2026`):
+**Cuentas reales creadas** (password inicial única para las cinco: `casoratti2026`):
 
-| Email | Rol | Ficha vinculada |
-|---|---|---|
-| `casorattiestudiojuridico@gmail.com` | **admin** | — |
-| `abogado@estudiocasoratti.com.ar` | abogado | Dr. Julián Casoratti (MP-4451) |
-| `cliente@ejemplo.com` | cliente | Ana Gómez |
-| `carlos@ejemplo.com` | cliente | Carlos Duarte |
-| `registrado@ejemplo.com` | usuario | — |
+| Email | Rol | Ficha vinculada | Password actual |
+|---|---|---|---|
+| `casorattiestudiojuridico@gmail.com` | **admin** | — | `DraCasoratti2026.` (cambiada desde el panel) |
+| `abogado@estudiocasoratti.com.ar` | abogado | Dr. Julián Casoratti (MP-4451) | `casoratti2026` |
+| `cliente@ejemplo.com` | cliente | Ana Gómez | `casoratti2026` |
+| `carlos@ejemplo.com` | cliente | Carlos Duarte | `casoratti2026` |
+| `registrado@ejemplo.com` | usuario | — | `casoratti2026` |
 
 Los roles se insertaron en `public.user_roles` (clave primaria `user_id`, un único rol
 efectivo por usuario) con `granted_by` = administrador. **Ninguna cuenta se auto-asignó
 el rol `admin`**: el alta se hizo por SQL directo desde un entorno protegido.
+
+### Verificación del despliegue de los módulos nuevos
+
+| Comprobación | Resultado |
+|---|---|
+| Push a `main` | ✅ `bb9dda5` (`16bb29f..bb9dda5 main -> main`) |
+| Deploy en Vercel | ✅ «Ready» en producción |
+| `/media-manifest.json` en producción | ✅ `200`, 6.660 bytes, 8 entradas con las mismas rutas, dimensiones y referencias que el build local |
+| `/panel/imagenes` y `/panel/seguridad` | ✅ `200` (SPA con rewrite) |
+| Chunk de administración en producción | ✅ contiene «Biblioteca de imágenes», «Actualizar contraseña», «La contraseña se actualizó correctamente», «Mover a la papelera», «Confirmo el reemplazo» y «Entiendo que esta acción no se puede deshacer» |
+| CSS de los módulos en producción | ✅ `admin-media-tab` y `admin-sec-requirement` presentes |
+| Variables de entorno en producción | ✅ el bundle apunta a `tdlmritilgtwnxbxkrze` y **no** al proyecto anterior |
+| Clave de servicio en el bundle | ✅ **no** hay ninguna: la única aparición de `sb_secret_` es el código de la librería que distingue el tipo de clave |
+| Imágenes del sitio público | ✅ `/` y `/recursos` cargan sin ninguna petición fallida (imágenes, scripts y CSS) |
